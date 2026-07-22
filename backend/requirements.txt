@@ -1,0 +1,50 @@
+# Pinned to versions installed during Phase 4 (2026-06-05).
+#
+# IMPORTANT INSTALL ORDER for new setups:
+#
+#   1. Create venv:
+#        python -m venv .venv
+#        .\.venv\Scripts\activate
+#
+#   2. Install PyTorch FIRST with CUDA 12.6 wheels:
+#        pip install torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0 \
+#                    --index-url https://download.pytorch.org/whl/cu126
+#
+#   3. Then install everything else:
+#        pip install -r requirements.txt
+#
+# WHY THIS ORDER: whisperx hard-pins torch~=2.8.0 in its install spec. If
+# you install whisperx BEFORE torch, pip will pull plain CPU torch from PyPI
+# and silently overwrite any GPU build you already had. Installing torch
+# first with the explicit CUDA wheel makes whisperx's resolver see "already
+# satisfied" and skip the swap.
+
+# Web framework
+fastapi==0.136.3
+uvicorn[standard]==0.48.0
+python-multipart==0.0.29
+python-dotenv==1.2.2
+
+# Data validation + settings
+pydantic==2.13.4
+pydantic-settings==2.14.1
+
+# Audio I/O
+numpy==2.4.6
+soundfile==0.13.1
+
+# Voice activity detection
+silero-vad==6.2.1
+
+# Transcription (ASR)
+faster-whisper==1.2.1
+
+# Word-level alignment + diarization (Phase 4 & 5)
+whisperx==3.8.6
+pyannote.audio==4.0.4
+
+# Hugging Face client (model downloads)
+huggingface-hub==0.36.2
+
+# Word document export (Phase 8)
+docxtpl==0.20.2

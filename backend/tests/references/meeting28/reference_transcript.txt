@@ -1,0 +1,34 @@
+Good morning everyone, today we just need to confirm the launch plan, how are things looking?
+Overall okay, but the payment vendor hasn't given the final confirmation.
+Then can we still launch next Monday?
+可以,但我觉得风险有一点高
+What is the main reason?
+If they delay again, users may encounter payment issues.
+Oh, okay. What's your recommendation then?
+我建议延迟一个星期
+One week? Okay, 可以。 Let's do that.
+Okay.
+What about support training?
+Training material已经准备好了, but only 6 out of the 12 staff attended.
+Can we finish training by this week?
+可以, I will run another session on Thursday.
+Okay, good.
+Engineering only tested up to 5,000 users.
+What's the expected traffic?
+Around 8,000.
+Oh, okay. Please ask them to run another load test.
+No problem.
+Let's summarize then. Decision 1 is to postpone launch by one week, right?
+Confirm.
+And Decision 2, all support staff must complete training before launch?
+Confirm.
+Okay.
+You've wrapped up the plan.
+Follow up with the payment vendor today.
+Conduct the training session on Thursday and get updated load test results by Friday.
+Got it.
+Anything else?
+沒有啦。
+Okay, okay. Thank you.
+Thank you for participating in the meeting.
+Bye.

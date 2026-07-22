@@ -1,0 +1,28 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# Environment + secrets
+.env
+
+# Data (uploaded audio, generated docs, model caches, DB file)
+data/*.db
+data/*.db-journal
+data/uploads/
+data/outputs/
+data/models/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
