@@ -30,7 +30,7 @@ _BUSY_PIPELINE = ("uploading", "uploaded", "audio_extracted", "vad_done",
 def _sweep_orphaned_meetings() -> None:
     with get_conn() as conn:
         # Mid-pipeline orphans: transcript incomplete -> hard error, re-upload
-        # (or rescue via tests/_resume_meeting.py which reuses the audio).
+        # (the stored audio in data/uploads can be reused to resume manually).
         placeholders = ",".join("?" * len(_BUSY_PIPELINE))
         n1 = conn.execute(
             f"UPDATE meetings SET status = 'error: interrupted by server restart', "
