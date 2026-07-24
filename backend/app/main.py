@@ -78,7 +78,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Meeting System API",
+    title="Kairos API",
     description="Local AI multilingual meeting transcription & content categorization",
     version="0.1.0",
     lifespan=lifespan,

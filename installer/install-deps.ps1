@@ -1,5 +1,5 @@
 <#
-    Meeting System - installer bootstrap
+    Kairos - installer bootstrap
     ====================================
     Run automatically by the Windows installer (MeetingSystem-Setup.exe) right
     after the application files are copied. It finishes the job setup.ps1 can
@@ -32,7 +32,7 @@ function Info($m) { Write-Host "  [info] $m" -ForegroundColor Gray }
 function Warn($m) { Write-Host "  [warn] $m" -ForegroundColor Yellow }
 function Has($cmd) { return [bool](Get-Command $cmd -ErrorAction SilentlyContinue) }
 
-Write-Host "Meeting System - first-time setup" -ForegroundColor Green
+Write-Host "Kairos - first-time setup" -ForegroundColor Green
 Write-Host ("=" * 50)
 Say "Install folder: $AppRoot"
 if ($DryRun) { Warn "DRY RUN: nothing will be installed or changed." }
@@ -91,7 +91,7 @@ if ($DryRun) {
 
 # ---------- 4. done ----------
 Step "Finished"
-Say "Launch the system from the Start Menu shortcut 'Meeting System'"
+Say "Launch the system from the Start Menu shortcut 'Kairos'"
 Say "(or run.ps1 in the install folder). The web interface opens at:"
 Say "    http://localhost:5173"
 Say ""

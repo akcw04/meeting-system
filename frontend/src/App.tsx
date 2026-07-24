@@ -30,9 +30,10 @@ export default function App() {
           onClick={goMeetings}
           onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goMeetings(); } }}
           title="Back to all meetings"
-          aria-label="Meeting System — back to all meetings"
+          aria-label="Kairos — back to all meetings"
         >
-          🎙️ Meeting System
+          <img src="/kairos-mark.png" alt="" className="brand-logo" />
+          Kairos
         </span>
         <nav className="topnav" aria-label="Main navigation">
           <button

@@ -1,5 +1,5 @@
 <#
-    Meeting System - one-command setup (Windows)
+    Kairos - one-command setup (Windows)
     ============================================
     Automates the manual steps in docs/INSTALL.md so a new user goes from a
     fresh clone to a runnable system with a single command:
@@ -48,7 +48,7 @@ function Info($m) { Write-Host "  [info] $m" -ForegroundColor Gray }
 function Warn($m) { Write-Host "  [warn] $m" -ForegroundColor Yellow; $script:Warnings += $m }
 function Has($cmd) { return [bool](Get-Command $cmd -ErrorAction SilentlyContinue) }
 
-Write-Host "Meeting System - setup" -ForegroundColor Green
+Write-Host "Kairos - setup" -ForegroundColor Green
 Write-Host ("=" * 50)
 Say "Project: $ProjectRoot"
 

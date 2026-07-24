@@ -1,7 +1,7 @@
-; Meeting System - Windows installer (Inno Setup 6)
+; Kairos - Windows installer (Inno Setup 6)
 ; ==================================================
 ; Produces a single MeetingSystem-Setup.exe that:
-;   * copies the application to  %LOCALAPPDATA%\Meeting System  (no admin needed)
+;   * copies the application to  %LOCALAPPDATA%\Kairos  (no admin needed)
 ;   * asks for the user's Hugging Face token in the wizard (optional)
 ;   * offers to pull the local AI model (~4.7 GB) during setup
 ;   * auto-installs missing prerequisites (Python/Node/FFmpeg/Ollama via winget)
@@ -16,7 +16,7 @@
 ; personal or rebuilt on the target machine by install-deps.ps1.
 
 #define SrcRoot ".."
-#define MyAppName "Meeting System"
+#define MyAppName "Kairos"
 #define MyAppVersion "1.0"
 
 [Setup]
@@ -24,16 +24,18 @@ AppId={{8B1F4E7A-2C3D-4E5F-9A6B-7C8D9E0F1A2B}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher=Annie Kiu Chi Wen
-DefaultDirName={localappdata}\Meeting System
+DefaultDirName={localappdata}\Kairos
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=Output
-OutputBaseFilename=MeetingSystem-Setup
+OutputBaseFilename=Kairos-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
+SetupIconFile=kairos.ico
 UninstallDisplayName={#MyAppName}
+UninstallDisplayIcon={app}\installer\kairos.ico
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; Flags: unchecked
@@ -60,17 +62,16 @@ Source: "{#SrcRoot}\frontend\eslint.config.js"; DestDir: "{app}\frontend"; Flags
 ; --- scripts, docs, launcher ---
 Source: "{#SrcRoot}\setup.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SrcRoot}\run.ps1"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SrcRoot}\README.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SrcRoot}\docs\INSTALL.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "install-deps.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
+Source: "kairos.ico"; DestDir: "{app}\installer"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Meeting System"; Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\run.ps1"""; WorkingDir: "{app}"; Comment: "Start the Meeting System (transcription + insights)"
-Name: "{autodesktop}\Meeting System"; Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\run.ps1"""; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\Kairos"; Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\run.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\installer\kairos.ico"; Comment: "Start Kairos (transcription + categorization)"
+Name: "{autodesktop}\Kairos"; Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\run.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\installer\kairos.ico"; Tasks: desktopicon
 
 [Run]
 ; the real setup: installs missing prerequisites, builds venv, pulls model
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{app}\installer\install-deps.ps1"" -HfToken ""{code:GetHfToken}"" {code:GetModelArg}"; Description: "Set up the Meeting System now (installs dependencies - needs internet)"; Flags: postinstall skipifsilent
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{app}\installer\install-deps.ps1"" -HfToken ""{code:GetHfToken}"" {code:GetModelArg}"; Description: "Set up Kairos now (installs dependencies - needs internet)"; Flags: postinstall skipifsilent
 ; the three gated pyannote licence pages (free; must be accepted once per HF account)
 Filename: "https://huggingface.co/pyannote/segmentation-3.0"; Flags: postinstall shellexec skipifsilent; Tasks: licpages; Description: "Open licence page: pyannote/segmentation-3.0"
 Filename: "https://huggingface.co/pyannote/speaker-diarization-3.1"; Flags: postinstall shellexec skipifsilent; Tasks: licpages; Description: "Open licence page: pyannote/speaker-diarization-3.1"

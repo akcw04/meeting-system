@@ -9,6 +9,7 @@ import {
   type Template,
 } from "../api/client";
 import { useCollapse } from "../components/useCollapse";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 /** Manage user-uploaded Word export templates (IR §2.2.7).
  * Users design a normal Word doc (plain section headings or [[markers]] — no codes),
@@ -33,6 +34,7 @@ export default function TemplatesPage() {
   const [file, setFile] = useState<File | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [guideOpen, toggleGuide] = useCollapse("guide.templates");
+  const [pendingDelete, setPendingDelete] = useState<Template | null>(null);
 
   const upload = useMutation({
     mutationFn: () => uploadTemplate(name.trim(), file as File),
@@ -156,11 +158,7 @@ export default function TemplatesPage() {
                 <button
                   className="ghost small danger"
                   disabled={remove.isPending}
-                  onClick={() => {
-                    if (window.confirm(`Delete template "${t.name}"? This cannot be undone.`)) {
-                      remove.mutate(t.id);
-                    }
-                  }}
+                  onClick={() => setPendingDelete(t)}
                 >
                   Delete
                 </button>
@@ -174,6 +172,20 @@ export default function TemplatesPage() {
           </div>
         )}
       </div>
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Delete this template?"
+        message={
+          pendingDelete
+            ? `"${pendingDelete.name}" is removed from the export options. This cannot be undone.`
+            : ""
+        }
+        onConfirm={() => {
+          if (pendingDelete) remove.mutate(pendingDelete.id);
+          setPendingDelete(null);
+        }}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

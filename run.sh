@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Meeting System - start both servers (macOS / Linux)
+# Kairos - start both servers (macOS / Linux)
 # ===================================================
 #   bash run.sh
 # Starts the backend (API :8000) and frontend (web UI :5173).

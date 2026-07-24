@@ -124,7 +124,7 @@ def main() -> None:
     foot.add_run("Prepared by: ____________________          "
                  "Next meeting: ____________________").font.size = Pt(10)
     note = doc.add_paragraph()
-    nrun = note.add_run("Generated with the Meeting System.")
+    nrun = note.add_run("Generated with Kairos.")
     nrun.italic = True
     nrun.font.size = Pt(8.5)
     nrun.font.color.rgb = MUTED

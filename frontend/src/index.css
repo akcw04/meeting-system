@@ -30,7 +30,27 @@ body {
   border-bottom: 2px solid var(--accent);
   background: var(--bg);
 }
-.brand { font-size: 18px; font-weight: 700; color: var(--accent); cursor: pointer; }
+.brand { display: inline-flex; align-items: center; gap: 9px; font-size: 18px; font-weight: 700; color: var(--accent); cursor: pointer; }
+.brand-logo { height: 28px; width: 28px; display: block; }
+
+/* In-app confirm dialog (replaces the browser's window.confirm popup) */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(29, 38, 48, 0.45);
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-card {
+  background: var(--bg);
+  border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  width: min(420px, calc(100vw - 48px));
+  padding: 18px 20px;
+}
+.modal-title { font-weight: 600; font-size: 15px; margin-bottom: 6px; }
+.modal-msg { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.modal-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.modal-danger:hover { filter: brightness(0.92); }
 .tagline { color: var(--muted); font-size: 12px; }
 .topnav { margin-left: auto; display: flex; gap: 8px; align-self: center; }
 .navtab {

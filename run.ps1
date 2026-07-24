@@ -1,5 +1,5 @@
 <#
-    Meeting System - start both servers (Windows)
+    Kairos - start both servers (Windows)
     ==============================================
     Launches the backend (API, port 8000) and the frontend (web UI, port 5173)
     each in its own window, so you don't have to juggle two terminals.
@@ -22,7 +22,7 @@ if (-not (Test-Path $venvActivate)) {
 Write-Host "Starting backend (http://127.0.0.1:8000) ..." -ForegroundColor Cyan
 Start-Process powershell -ArgumentList @(
     "-NoExit","-Command",
-    "cd `"$Backend`"; . `"$venvActivate`"; Write-Host 'BACKEND - Meeting System API' -ForegroundColor Green; uvicorn app.main:app --host 127.0.0.1 --port 8000"
+    "cd `"$Backend`"; . `"$venvActivate`"; Write-Host 'BACKEND - Kairos API' -ForegroundColor Green; uvicorn app.main:app --host 127.0.0.1 --port 8000"
 )
 
 Start-Sleep -Seconds 2
@@ -30,7 +30,7 @@ Start-Sleep -Seconds 2
 Write-Host "Starting frontend (http://localhost:5173) ..." -ForegroundColor Cyan
 Start-Process powershell -ArgumentList @(
     "-NoExit","-Command",
-    "cd `"$Frontend`"; Write-Host 'FRONTEND - Meeting System UI' -ForegroundColor Green; npm run dev"
+    "cd `"$Frontend`"; Write-Host 'FRONTEND - Kairos UI' -ForegroundColor Green; npm run dev"
 )
 
 Write-Host "`nBoth servers are starting in their own windows." -ForegroundColor Green

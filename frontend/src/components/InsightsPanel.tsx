@@ -9,6 +9,7 @@ import {
   type InsightItem,
   type Insights,
 } from "../api/client";
+import ConfirmDialog from "./ConfirmDialog";
 
 /** Summary + the five IR categories. Each item links to its supporting segment
  * (the anti-hallucination citation) and can be edited or deleted in place — the
@@ -173,6 +174,7 @@ function InsightItemRow({
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.description);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const save = useMutation({
     mutationFn: (description: string) =>
@@ -249,13 +251,18 @@ function InsightItemRow({
         <button
           className="linkbtn danger"
           disabled={del.isPending}
-          onClick={() => {
-            if (window.confirm("Delete this item? (It comes back if you regenerate insights.)")) del.mutate();
-          }}
+          onClick={() => setConfirmingDelete(true)}
         >
           {del.isPending ? "Deleting…" : "🗑 Delete"}
         </button>
       </div>
+      <ConfirmDialog
+        open={confirmingDelete}
+        title="Delete this item?"
+        message="It is removed from the insights and the export. It comes back if you regenerate insights."
+        onConfirm={() => { setConfirmingDelete(false); del.mutate(); }}
+        onCancel={() => setConfirmingDelete(false)}
+      />
       {del.isError && (
         <div className="empty-note" style={{ color: "var(--danger)" }}>
           Delete failed: {(del.error as Error).message}

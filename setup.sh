@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Meeting System - one-command setup (macOS / Linux)
+# Kairos - one-command setup (macOS / Linux)
 # ==================================================
 # Automates docs/INSTALL.md. Auto-adapts: NVIDIA GPU (Linux) -> CUDA PyTorch;
 # otherwise (incl. all Macs) -> CPU build + CPU mode in .env.
@@ -23,7 +23,7 @@ info(){ printf '  \033[90m[info]\033[0m %s\n' "$1"; }
 warn(){ printf '  \033[33m[warn]\033[0m %s\n' "$1"; WARN+=("$1"); }
 has(){ command -v "$1" >/dev/null 2>&1; }
 
-echo -e "\033[32mMeeting System - setup\033[0m"
+echo -e "\033[32mKairos - setup\033[0m"
 echo "Project: $ROOT"
 
 # ---------- prerequisites ----------
