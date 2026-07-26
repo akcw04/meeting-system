@@ -1,23 +1,29 @@
-"""Fill a USER's own Word document with a meeting's data - no code-like syntax.
+"""Fill a USER's own Word document with a meeting's data - no code tags needed.
 
 Unlike the built-in docxtpl template (which uses {{ Jinja }} tags), a user
 brings an ordinary .docx and we fill it WITHOUT learning any markup. For each
 field we look, in this order:
 
-  1. MARKER  - a plain-English placeholder like [[Summary]] or [[Action Items]]
-               dropped exactly where the user wants that content. Inline for
-               scalars (e.g. "Date: [[Date]]"); on its own line for lists/tables.
-  2. HEADING - failing a marker, a section heading whose text matches the field
-               name (e.g. "Action Items", "决策") - we fill underneath it.
+  1. HEADING / LABEL - a section heading or short label that names the field.
+     Matching is forgiving: an exact name ("Action Items", "决策"), a label that
+     CONTAINS the name ("Key Actions", "put your action items here"), or a close
+     typo ("Actoin Items") all resolve; list/table content is filled beneath it.
+  2. TABLE LABEL - a details row like "Date | (blank)": the empty cell beside a
+     recognised scalar label is filled in place, so a details block needs no
+     markers at all.
+  3. MARKER - still supported for precise inline placement: a plain-English
+     [[Date]] or [[Summary]] dropped exactly where the value should go.
 
-Recognised names work in English and Chinese and are case-insensitive. We only
-INSERT content (never restyle), so the document's fonts/layout are preserved.
+Recognised names work in English and Chinese and are case-insensitive. Loose
+matching is gated to short, label-like lines so it never fires inside a
+sentence. We only INSERT content (never restyle), so fonts/layout are preserved.
 
 `fill_user_document` returns the saved path + a report of which fields were
 placed (and how) and which had data but found no spot.
 """
 from __future__ import annotations
 
+import difflib
 import re
 from pathlib import Path
 
@@ -73,6 +79,66 @@ _LOOKUP: dict[str, str] = {}
 for _key, _syns in _FIELD_SYNONYMS.items():
     for _syn in _syns:
         _LOOKUP[_norm(_syn)] = _key
+
+# synonyms longest-first, for containment matching ("put your action items here")
+_SYN_BY_LEN = sorted(_LOOKUP.items(), key=lambda kv: -len(kv[0]))
+_HAS_CJK = re.compile(r"[㐀-䶿一-鿿]")
+
+
+def _loose_match(n: str, scalar_only: bool = False) -> str | None:
+    """Match a normalised, LABEL-LIKE line to a field beyond an exact synonym:
+    first by whole-word containment of a known synonym (longest wins, so
+    "put your action items here" -> action_items), then by fuzzy similarity for
+    typos ("actoin items"). Callers must gate this to short/label text so it
+    never fires inside a body sentence."""
+    best_key, best_len = None, 0
+    for syn, key in _SYN_BY_LEN:
+        if scalar_only and key not in _SCALAR:
+            continue
+        if len(syn) < 4:  # skip tiny synonyms that would match noise
+            continue
+        if _HAS_CJK.search(syn):
+            hit = syn in n
+        else:
+            hit = re.search(r"(?<![a-z])" + re.escape(syn) + r"(?![a-z])", n) is not None
+        if hit and len(syn) > best_len:
+            best_key, best_len = key, len(syn)
+    if best_key:
+        return best_key
+    fk, fr = None, 0.0
+    for syn, key in _LOOKUP.items():
+        if scalar_only and key not in _SCALAR:
+            continue
+        r = difflib.SequenceMatcher(None, n, syn).ratio()
+        if r > fr:
+            fr, fk = r, key
+    # 0.90 is deliberately conservative: it catches genuine typos ("actoin items",
+    # "summry") but still flags heavier deviations like "Riks" -> risks, so the
+    # feedback stays useful rather than papering over a wrong heading.
+    return fk if fr >= 0.90 else None
+
+
+def _labelish(text: str, style_name: str = "") -> bool:
+    """A heading or short standalone label (never a full body sentence)."""
+    n = _norm(text)
+    if not n:
+        return False
+    if style_name.startswith("Heading") or style_name.startswith("Title"):
+        return True
+    return len(n.split()) <= 6 and text.strip()[-1:] not in ".!?。！？"
+
+
+def _match_field(text: str, style_name: str = "", scalar_only: bool = False) -> str | None:
+    """Field key for a heading/label: exact synonym, else loose (if label-like)."""
+    n = _norm(text)
+    if not n:
+        return None
+    k = _LOOKUP.get(n)
+    if k:
+        return k if (not scalar_only or k in _SCALAR) else None
+    if _labelish(text, style_name):
+        return _loose_match(n, scalar_only)
+    return None
 
 
 # --- value rendering ------------------------------------------------------
@@ -244,9 +310,41 @@ def _fill_markers(doc, ctx: dict, filled: dict) -> None:
                         _set_paragraph_text(para, _resolve_inline(para.text, ctx, filled))
 
 
+def _set_cell_value(cell, text: str) -> None:
+    """Write text into a table cell, keeping the cell's existing formatting."""
+    p = cell.paragraphs[0]
+    if p.runs:
+        p.runs[0].text = text
+        for r in p.runs[1:]:
+            r.text = ""
+    else:
+        p.add_run(text)
+
+
+def _fill_table_labels(doc, ctx: dict, filled: dict) -> None:
+    """Marker-free scalars: a details row like 'Date | (blank)' has the blank
+    cell to its right filled in. Only scalar fields, and only when the target
+    cell is empty (or holds a leftover [[marker]]), so real data is never
+    overwritten."""
+    for table in doc.tables:
+        for row in table.rows:
+            cells = row.cells
+            for i in range(len(cells) - 1):
+                key = _match_field(cells[i].text, scalar_only=True)
+                if not key or key in filled:
+                    continue
+                target = cells[i + 1]
+                if cells[i]._tc is target._tc:  # merged across columns, not a value cell
+                    continue
+                stripped = target.text.strip()
+                if stripped == "" or _MARKER.fullmatch(stripped):
+                    _set_cell_value(target, _scalar_value(key, ctx))
+                    filled[key] = "table-label"
+
+
 def _fill_headings(doc, ctx: dict, filled: dict) -> None:
     for para in list(doc.paragraphs):
-        key = _LOOKUP.get(_norm(para.text))
+        key = _match_field(para.text, para.style.name if para.style else "")
         if key and key not in filled:
             _insert_field(doc, para, key, ctx)
             filled[key] = "heading"
@@ -274,13 +372,28 @@ def recognised_fields(template_path: Path) -> list[str]:
             "Please upload a valid .docx saved from Word."
         ) from exc
     found: set[str] = set()
-    for para in _all_paragraphs(doc):
-        if _norm(para.text) in _LOOKUP:
-            found.add(_LOOKUP[_norm(para.text)])
+    # body paragraphs: heading/label match (exact, containment or fuzzy) + markers
+    for para in doc.paragraphs:
+        k = _match_field(para.text, para.style.name if para.style else "")
+        if k:
+            found.add(k)
         for name in _MARKER.findall(para.text):
             key = _LOOKUP.get(_norm(name))
             if key:
                 found.add(key)
+    # tables: marker-free label->next-cell scalars + inline markers
+    for table in doc.tables:
+        for row in table.rows:
+            cells = row.cells
+            for i, cell in enumerate(cells):
+                for name in _MARKER.findall(cell.text):
+                    key = _LOOKUP.get(_norm(name))
+                    if key:
+                        found.add(key)
+                if i < len(cells) - 1:
+                    k = _match_field(cell.text, scalar_only=True)
+                    if k and cells[i]._tc is not cells[i + 1]._tc:
+                        found.add(k)
     return sorted(found)
 
 
@@ -312,6 +425,7 @@ def fill_user_document(meeting_id: int, template_path: Path) -> tuple[Path, dict
 
     filled: dict[str, str] = {}
     _fill_markers(doc, ctx, filled)
+    _fill_table_labels(doc, ctx, filled)
     _fill_headings(doc, ctx, filled)
 
     skipped = [k for k in _data_fields(ctx) if k not in filled]

@@ -73,16 +73,16 @@ export default function TemplatesPage() {
             <div className="how-examples">
               <div className="how-ex">
                 <div className="how-ex-label">1 · Write a section heading</div>
-                <div>You type: <code>Action Items</code></div>
+                <div>You type: <code>Action Items</code> <span style={{ color: "var(--muted)" }}>(or <code>Key Actions</code> — near-misses work)</span></div>
                 <div className="how-ex-arrow">→ we fill the action-items list right underneath it</div>
               </div>
               <div className="how-ex">
-                <div className="how-ex-label">2 · Or a marker for one value</div>
-                <div>You type: <code>Date: [[Date]]</code></div>
-                <div className="how-ex-arrow">→ becomes: Date: 17 June 2026</div>
+                <div className="how-ex-label">2 · Or a label in a table</div>
+                <div>You type: <code>Date</code> and leave the next cell blank</div>
+                <div className="how-ex-arrow">→ we fill the cell beside it: 17 June 2026</div>
               </div>
             </div>
-            Both work in <b>English or Chinese</b> (e.g. <code>决策</code> or <code>[[日期]]</code>).
+            Both work in <b>English or Chinese</b> (e.g. <code>决策</code> or <code>日期</code>).
           </li>
           <li>
             <b>Upload it here, then export.</b> Give it a name and upload (we check it has at least
@@ -91,7 +91,7 @@ export default function TemplatesPage() {
           </li>
         </ol>
         <p className="guide-scope">
-          <b>Names we recognise</b> (as a heading <i>or</i> a marker, any language): Meeting Title ·
+          <b>Names we recognise</b> (as a heading <i>or</i> a table label, any language): Meeting Title ·
           Date · Duration · Language · Attendees · Summary · Key Decisions · Action Items · Deadlines ·
           Technical Issues · Risks · Transcript. Anything else is left exactly as you wrote it.
         </p>

@@ -1,15 +1,16 @@
 """Generate templates/sample_template.docx - the friendly, PROFESSIONAL starter.
 
 A real-world meeting-minutes layout that the fill engine recognises with NO
-code-like tags:
+code tags at all:
+  - a details table whose LABEL cells (Meeting Title, Date, ...) have the empty
+    cell beside each one filled in automatically;
   - plain section HEADINGS (Meeting Summary, Key Decisions, Action Items, ...)
-    are filled underneath automatically;
-  - inline [[markers]] (e.g. [[Date]]) drop a single value exactly where placed.
+    are filled underneath.
 
-Structure follows common professional minutes conventions (a date/attendees
-details block, then Summary -> Key Decisions -> Action Items (who/what/when) ->
-Deadlines -> Issues/Risks -> full record). Users restyle freely - only the
-recognised names matter.
+Structure follows common professional minutes conventions (a details block,
+then Summary -> Key Decisions -> Action Items -> Deadlines -> Issues/Risks ->
+full record). Users restyle freely - only the recognised names matter, and the
+matching is forgiving (e.g. "Key Actions" or a small typo still resolves).
 
     python templates\\generate_sample_template.py
 """
@@ -25,12 +26,14 @@ ACCENT = RGBColor(0x1F, 0x4E, 0x79)
 MUTED = RGBColor(0x6B, 0x77, 0x85)
 OUT = Path(__file__).resolve().parent / "sample_template.docx"
 
-# Details block: (label, marker). Labels are static; markers get filled.
+# Details block: (label, value). The label cell is static; the empty value cell
+# beside it is filled in place by the label-to-next-cell matcher - no markers.
 META = [
-    ("Date", "[[Date]]"),
-    ("Duration", "[[Duration]]"),
-    ("Language", "[[Language]]"),
-    ("Attendees", "[[Attendees]]"),
+    ("Meeting Title", ""),
+    ("Date", ""),
+    ("Duration", ""),
+    ("Language", ""),
+    ("Attendees", ""),
 ]
 # Section headings the system fills underneath, in professional order.
 SECTIONS = ["Meeting Summary", "Key Decisions", "Action Items",
@@ -75,18 +78,13 @@ def main() -> None:
     trun.font.size = Pt(22)
     trun.font.color.rgb = ACCENT
 
-    subtitle = doc.add_paragraph()
-    subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    srun = subtitle.add_run("[[Meeting Title]]")
-    srun.font.size = Pt(13)
-    srun.font.color.rgb = ACCENT
-    _bottom_border(subtitle)  # rule under the header
+    _bottom_border(title)  # rule under the header
 
     guide = doc.add_paragraph()
     grun = guide.add_run(
-        "Template guide (delete this line before sending): keep the section headings below and the "
-        "double-bracket markers in the table above - the system fills them in automatically. "
-        "Restyle anything and add your logo above."
+        "Template guide (delete this line before sending): keep the labels in the table above and the "
+        "section headings below - the system fills the empty cell beside each label and the content "
+        "under each heading automatically. Restyle anything and add your logo above."
     )
     grun.italic = True
     grun.font.size = Pt(8.5)
