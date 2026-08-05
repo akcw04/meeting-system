@@ -1,7 +1,7 @@
 <#
     Kairos - installer bootstrap
     ====================================
-    Run automatically by the Windows installer (MeetingSystem-Setup.exe) right
+    Run automatically by the Windows installer (Kairos-Setup.exe) right
     after the application files are copied. It finishes the job setup.ps1 can
     only warn about: any missing system prerequisite is installed via winget,
     PATH is refreshed, and then setup.ps1 builds the Python/Node environments.

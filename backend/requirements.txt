@@ -39,7 +39,7 @@ silero-vad==6.2.1
 # Transcription (ASR)
 faster-whisper==1.2.1
 
-# Word-level alignment + diarization (Phase 4 & 5)
+# Word-level alignment + speaker diarization (Phase 4 & 5)
 whisperx==3.8.6
 pyannote.audio==4.0.4
 

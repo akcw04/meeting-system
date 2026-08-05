@@ -1,0 +1,56 @@
+About to install Kairos
+=======================
+
+Kairos transcribes recorded meetings, labels who spoke, extracts the action
+items, decisions, deadlines, issues and risks, and exports a Word report.
+
+Everything runs on this computer. Recordings are never uploaded anywhere.
+
+
+WHAT THIS SETUP WILL DO
+-----------------------
+
+  1. Copy Kairos into your own user folder.
+     No administrator password is needed, and nothing outside your account
+     is changed.
+
+  2. Install anything that is missing.
+     Kairos needs Python, Node.js, FFmpeg and Ollama. Setup checks for each
+     one and installs only what you do not already have.
+
+  3. Download the AI model (about 4.7 GB).
+     This is optional - you can untick it on the next screen and download it
+     later instead.
+
+  4. Ask for a Hugging Face token.
+     This is a free account key that lets Kairos download the models that
+     tell speakers apart. You can leave it blank now and add it later.
+
+
+BEFORE YOU CONTINUE, PLEASE CHECK
+---------------------------------
+
+  * You have an internet connection. The downloads are several gigabytes.
+
+  * You have about 40 GB of free disk space.
+
+  * You have 20 to 40 minutes. Most of that is downloading, and it only
+    happens on this first install.
+
+A graphics card is not required. If this computer does not have an NVIDIA
+graphics card, Kairos switches to a slower mode automatically and still
+works normally.
+
+
+AFTER INSTALLING
+----------------
+
+Kairos appears in your Start Menu. Open it, wait for the two black windows
+to finish starting, then go to http://localhost:5173 in your browser.
+
+To remove Kairos later, use Windows Settings > Apps > Installed apps. Please
+note that uninstalling also deletes any meetings you have processed, so
+export anything you want to keep first.
+
+
+Click Next to continue, or Cancel to stop without changing anything.

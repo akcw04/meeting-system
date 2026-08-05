@@ -1,6 +1,6 @@
 ; Kairos - Windows installer (Inno Setup 6)
 ; ==================================================
-; Produces a single MeetingSystem-Setup.exe that:
+; Produces a single Kairos-Setup.exe that:
 ;   * copies the application to  %LOCALAPPDATA%\Kairos  (no admin needed)
 ;   * asks for the user's Hugging Face token in the wizard (optional)
 ;   * offers to pull the local AI model (~4.7 GB) during setup
@@ -8,8 +8,9 @@
 ;     and builds the environment by running installer\install-deps.ps1
 ;   * creates Start Menu (+ optional desktop) shortcuts and an uninstaller
 ;
-; Rebuild:  "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" MeetingSystem.iss
-; Output:   installer\Output\MeetingSystem-Setup.exe
+; Rebuild:  "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" Kairos.iss
+; Output:   Kairos-Setup.exe in the project root - deliberately NOT buried in a
+;           subfolder, so anyone opening the folder sees what to run.
 ;
 ; NOTE: the payload deliberately EXCLUDES backend\.env (personal tokens),
 ; .venv, node_modules, data\ and all dev/report artifacts. Those are either
@@ -26,8 +27,13 @@ AppVersion={#MyAppVersion}
 AppPublisher=Annie Kiu Chi Wen
 DefaultDirName={localappdata}\Kairos
 DisableProgramGroupPage=yes
+; Inno 6 hides the welcome page by default; a first-time user needs it, and it
+; is where they consent to continue before anything is written.
+DisableWelcomePage=no
+; Plain-English page explaining what setup will do, shown before any choices.
+InfoBeforeFile=BEFORE-YOU-INSTALL.txt
 PrivilegesRequired=lowest
-OutputDir=Output
+OutputDir={#SrcRoot}
 OutputBaseFilename=Kairos-Setup
 Compression=lzma2
 SolidCompression=yes
@@ -38,7 +44,8 @@ UninstallDisplayName={#MyAppName}
 UninstallDisplayIcon={app}\installer\kairos.ico
 
 [Tasks]
-Name: "desktopicon"; Description: "Create a &desktop shortcut"; Flags: unchecked
+; Ticked by default - a desktop icon is what most users look for after install.
+Name: "desktopicon"; Description: "Create a &desktop shortcut"
 Name: "pullmodel"; Description: "Download the local AI model during setup (llama3.1:8b, ~4.7 GB)"
 Name: "licpages"; Description: "Open the 3 free model-licence pages when setup finishes (one-time click each)"
 
@@ -59,15 +66,21 @@ Source: "{#SrcRoot}\frontend\tsconfig.json"; DestDir: "{app}\frontend"; Flags: i
 Source: "{#SrcRoot}\frontend\tsconfig.app.json"; DestDir: "{app}\frontend"; Flags: ignoreversion
 Source: "{#SrcRoot}\frontend\tsconfig.node.json"; DestDir: "{app}\frontend"; Flags: ignoreversion
 Source: "{#SrcRoot}\frontend\eslint.config.js"; DestDir: "{app}\frontend"; Flags: ignoreversion
-; --- scripts, docs, launcher ---
+; --- scripts, docs, launchers ---
 Source: "{#SrcRoot}\setup.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SrcRoot}\run.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SrcRoot}\Kairos.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SrcRoot}\README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SrcRoot}\docs\INSTALL.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "install-deps.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
+Source: "README.md"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "kairos.ico"; DestDir: "{app}\installer"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Kairos"; Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\run.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\installer\kairos.ico"; Comment: "Start Kairos (transcription + categorization)"
-Name: "{autodesktop}\Kairos"; Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\run.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\installer\kairos.ico"; Tasks: desktopicon
+; Both shortcuts run the same launcher the install folder exposes, so starting
+; Kairos from the Start Menu, the desktop or the folder behaves identically.
+Name: "{autoprograms}\Kairos"; Filename: "{app}\Kairos.bat"; WorkingDir: "{app}"; IconFilename: "{app}\installer\kairos.ico"; Comment: "Start Kairos (transcription + categorization)"
+Name: "{autodesktop}\Kairos"; Filename: "{app}\Kairos.bat"; WorkingDir: "{app}"; IconFilename: "{app}\installer\kairos.ico"; Comment: "Start Kairos (transcription + categorization)"; Tasks: desktopicon
 
 [Run]
 ; the real setup: installs missing prerequisites, builds venv, pulls model
