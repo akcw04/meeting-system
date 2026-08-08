@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Kairos - one-command setup (macOS / Linux)
 # ==================================================
-# Automates docs/INSTALL.md. Auto-adapts: NVIDIA GPU (Linux) -> CUDA PyTorch;
-# otherwise (incl. all Macs) -> CPU build + CPU mode in .env.
+# Takes a fresh clone to a runnable system in one command. Auto-adapts:
+# NVIDIA GPU (Linux) -> CUDA PyTorch; otherwise (incl. all Macs) -> CPU build
+# + CPU mode in .env.
 #
 #   bash setup.sh                 normal run (prompts for HF token)
 #   HF_TOKEN=hf_xxx bash setup.sh supply token non-interactively
@@ -30,7 +31,7 @@ echo "Project: $ROOT"
 cyan "Checking prerequisites"
 if has python3; then
   PYV="$(python3 --version 2>&1)"; ok "Python found: $PYV"
-  case "$PYV" in *3.13*) ;; *) warn "INSTALL.md expects Python 3.13.x - you have '$PYV'." ;; esac
+  case "$PYV" in *3.13*) ;; *) warn "Built and tested on Python 3.13.x - you have '$PYV'. It may still work." ;; esac
 else
   warn "python3 NOT found. Install Python 3.13 (macOS: 'brew install python@3.13'), then re-run."
   echo -e "\033[31mCannot continue without Python.\033[0m"; exit 1

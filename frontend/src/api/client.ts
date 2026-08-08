@@ -11,11 +11,13 @@ export interface Meeting {
   original_filename: string;
   duration_seconds: number | null;
   language: string | null;
-  languages_detected: string | null;   // e.g. "en,zh" when code-switch detected
+  languages_detected: string | null;   // e.g. "en,ms" or "en,ms,zh" when code-switch detected
   primary_language: string;
   expected_speakers: number | null;
   status: string;
   progress?: number | null;
+  follow_up_of?: number | null;          // the meeting this one follows up, if any
+  carry_forward_status?: string | null;  // null | 'analysing' | 'ready' | 'failed: …'
   created_at: string;
   updated_at: string;
 }
@@ -90,6 +92,27 @@ export interface Template {
   original_filename: string;
   created_at: string;
   recognised?: string[] | null; // field keys found in the doc (set on upload only)
+}
+
+/** One of the PREVIOUS meeting's action items, plus what this meeting said
+ * about it. `source_segment_id` is the line here that evidences the verdict. */
+export interface CarryForwardItem {
+  id: number;
+  previous_meeting_id: number;
+  previous_action_id?: number | null;
+  description: string;
+  owner?: string | null;
+  status: string; // completed | in_progress | blocked | changed | not_discussed
+  note?: string | null;
+  source_segment_id?: number | null;
+}
+
+export interface CarryForward {
+  meeting_id: number;
+  previous_meeting_id: number | null;
+  previous_meeting_title?: string | null;
+  status: string | null; // null | 'analysing' | 'ready' | 'failed: …'
+  items: CarryForwardItem[];
 }
 
 async function check(res: Response): Promise<Response> {
@@ -254,10 +277,49 @@ export async function deleteTemplate(id: number): Promise<void> {
 export const templateDownloadUrl = (id: number) => `${API}/templates/${id}/download`;
 export const starterTemplateUrl = () => `${API}/templates/starter/download`;
 
+/** Link this meeting to the earlier one it follows up (null unlinks it).
+ * Linking starts the carry-forward analysis on the backend. */
+export async function setFollowUp(
+  meetingId: number,
+  previousMeetingId: number | null,
+): Promise<Meeting> {
+  return (
+    await check(
+      await fetch(`${API}/meetings/${meetingId}/follow-up`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ previous_meeting_id: previousMeetingId }),
+      }),
+    )
+  ).json();
+}
+
+export async function getCarryForward(meetingId: number): Promise<CarryForward> {
+  return (await check(await fetch(`${API}/meetings/${meetingId}/carry-forward`))).json();
+}
+
+export async function rerunCarryForward(meetingId: number): Promise<void> {
+  await check(await fetch(`${API}/meetings/${meetingId}/carry-forward`, { method: "POST" }));
+}
+
 export const audioUrl = (meetingId: number) => `${API}/meetings/${meetingId}/audio`;
 /** Export URL; pass a templateId to fill a saved template instead of the default. */
 export const exportUrl = (meetingId: number, templateId?: number | null) =>
   `${API}/meetings/${meetingId}/export/docx${templateId ? `?template_id=${templateId}` : ""}`;
+/** One document covering this meeting and every meeting it follows up. */
+export const combinedExportUrl = (meetingId: number) =>
+  `${API}/meetings/${meetingId}/export/combined`;
+
+/** How each carry-forward verdict is worded in the UI. Keys match the backend's
+ * stored values; `not_discussed` is the one the SYSTEM assigns when the model
+ * found no evidence, never something it claimed. */
+export const CARRY_FORWARD_LABELS: Record<string, string> = {
+  completed: "Completed",
+  in_progress: "In progress",
+  blocked: "Blocked",
+  changed: "Changed",
+  not_discussed: "Not discussed",
+};
 
 /** Human label + "is the pipeline still running?" for a status value. */
 export function statusInfo(status: string): { label: string; busy: boolean; failed: boolean } {

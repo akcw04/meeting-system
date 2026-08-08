@@ -51,23 +51,13 @@ echo.
 pause
 
 REM ------------------------------------------------------------------- start
+REM run.ps1 takes over this window: it starts both servers hidden, waits until
+REM they are actually serving, opens the browser, and shuts them down again
+REM when the user presses Enter. Nothing more to print here - a second message
+REM after it returns would just be another prompt to dismiss.
 :start
-echo.
-echo   Starting Kairos...
-echo.
 powershell -ExecutionPolicy Bypass -NoProfile -File "%~dp0run.ps1"
 if errorlevel 1 goto runfailed
-
-echo.
-echo   Kairos is running in two separate windows.
-echo.
-echo   Open  http://localhost:5173  in your browser once the FRONTEND
-echo   window says "ready".
-echo.
-echo   To stop Kairos, close those two windows.
-echo   This window can be closed now.
-echo.
-pause
 exit /b 0
 
 REM ----------------------------------------------------------------- endings
@@ -80,15 +70,17 @@ exit /b 0
 
 :setupfailed
 echo.
-echo   Setup did not finish. Scroll up to see what is missing, or open
-echo   docs\INSTALL.md for the manual steps and troubleshooting.
+echo   Setup did not finish. Scroll up in this window - it names the
+echo   tool it could not find. Install that, then run this file again.
 echo.
 pause
 exit /b 1
 
 :runfailed
+REM run.ps1 already printed the reason and the tail of the server logs, and
+REM waited for the user, so this only needs to point at the deeper help.
 echo.
-echo   Kairos could not start. See docs\INSTALL.md for help.
+echo   The logs\ folder has the full server output.
 echo.
 pause
 exit /b 1

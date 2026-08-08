@@ -49,7 +49,10 @@ def get_diarization_pipeline() -> Pipeline:
         if not settings.hf_token:
             raise RuntimeError(
                 "HF_TOKEN not set in backend/.env. pyannote.audio needs it to "
-                "download the speaker-diarization-3.1 model. See docs/INSTALL.md."
+                "download the speaker-diarization-3.1 model. Create a free "
+                "'read' token at https://huggingface.co/settings/tokens, then "
+                "add HF_TOKEN=hf_... to backend/.env. The three pyannote model "
+                "licences must also be accepted once on that account."
             )
         # pyannote.audio 4.x renamed `use_auth_token` -> `token`. We try the
         # new name first and fall back for older installs.

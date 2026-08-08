@@ -1,9 +1,14 @@
-"""Meeting routes - upload, read, list, transcript.
+"""Meeting routes - upload, read, list, transcript, follow-up linking, export.
 
-POST /meetings                    -> upload an audio/video, kick off full pipeline
-GET  /meetings                    -> list all meetings (newest first)
-GET  /meetings/{id}               -> fetch one meeting's current state
-GET  /meetings/{id}/transcript    -> fetch all transcript segments for a meeting
+POST  /meetings                     -> upload an audio/video, kick off full pipeline
+GET   /meetings                     -> list all meetings (newest first)
+GET   /meetings/{id}                -> fetch one meeting's current state
+GET   /meetings/{id}/transcript     -> fetch all transcript segments for a meeting
+PATCH /meetings/{id}/follow-up      -> link/unlink the meeting this one follows up
+GET   /meetings/{id}/carry-forward  -> progress on the previous meeting's actions
+POST  /meetings/{id}/carry-forward  -> re-run that analysis
+GET   /meetings/{id}/export/docx    -> minutes for this meeting alone
+GET   /meetings/{id}/export/combined-> minutes for the whole follow-up chain
 """
 from __future__ import annotations
 
@@ -37,7 +42,15 @@ from app.schemas import (
     TranscriptResponse,
     WordResponse,
 )
-from app.schemas.insights import InsightItemResponse, InsightItemUpdate, InsightsResponse
+from app.schemas.insights import (
+    CarryForwardItemResponse,
+    CarryForwardResponse,
+    FollowUpUpdate,
+    InsightItemResponse,
+    InsightItemUpdate,
+    InsightsResponse,
+)
+from app.pipeline.carryforward import carry_forward_safe
 from app.pipeline.citation import is_low_support
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
@@ -343,6 +356,168 @@ def delete_insight_item(meeting_id: int, category: str, item_id: int) -> None:
         )
         if cur.rowcount == 0:
             raise HTTPException(404, f"{category} item {item_id} not in meeting {meeting_id}")
+
+
+# ====================================================================
+# Follow-up meetings + carry-forward analysis (Session 22)
+# ====================================================================
+
+@router.patch("/{meeting_id}/follow-up", response_model=MeetingResponse)
+def set_follow_up(
+    meeting_id: int, body: FollowUpUpdate, background_tasks: BackgroundTasks
+) -> MeetingResponse:
+    """Mark this meeting as the follow-up of an earlier one (or unlink it).
+
+    Linking immediately kicks off the carry-forward analysis in the background,
+    because that is the only reason a user links two meetings - making them ask
+    for it separately would be a pointless second click. Pass a null
+    previous_meeting_id to unlink, which also clears the stored analysis.
+    """
+    previous_id = body.previous_meeting_id
+
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404, f"Meeting {meeting_id} not found")
+
+        if previous_id is not None:
+            if previous_id == meeting_id:
+                raise HTTPException(400, "A meeting cannot follow up itself.")
+            prev = conn.execute(
+                "SELECT id, status FROM meetings WHERE id = ?", (previous_id,)
+            ).fetchone()
+            if prev is None:
+                raise HTTPException(404, f"Meeting {previous_id} not found")
+            prev_segments = conn.execute(
+                "SELECT COUNT(*) AS n FROM segments WHERE meeting_id = ?", (previous_id,)
+            ).fetchone()["n"]
+            if prev_segments == 0:
+                raise HTTPException(
+                    409,
+                    f"Meeting {previous_id} has no transcript yet (status: {prev['status']}), "
+                    "so there is nothing to carry forward from it.",
+                )
+            this_segments = conn.execute(
+                "SELECT COUNT(*) AS n FROM segments WHERE meeting_id = ?", (meeting_id,)
+            ).fetchone()["n"]
+            if this_segments == 0:
+                raise HTTPException(
+                    409,
+                    f"Meeting {meeting_id} has no transcript yet (status: {row['status']}). "
+                    "Wait for processing to finish before linking it.",
+                )
+            # Walk the proposed predecessor's own chain: if this meeting is
+            # already somewhere up that chain, linking would create a cycle
+            # (A follows B follows A), which would hang every chain walk.
+            seen: set[int] = set()
+            cursor_id = previous_id
+            while cursor_id is not None and cursor_id not in seen:
+                if cursor_id == meeting_id:
+                    raise HTTPException(
+                        400,
+                        "That would create a loop - the meeting you picked already "
+                        "follows this one, directly or through another meeting.",
+                    )
+                seen.add(cursor_id)
+                nxt = conn.execute(
+                    "SELECT follow_up_of FROM meetings WHERE id = ?", (cursor_id,)
+                ).fetchone()
+                cursor_id = nxt["follow_up_of"] if nxt else None
+
+        # Re-linking or unlinking invalidates any stored analysis.
+        conn.execute("DELETE FROM carry_forward WHERE meeting_id = ?", (meeting_id,))
+        conn.execute(
+            "UPDATE meetings SET follow_up_of = ?, carry_forward_status = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (previous_id, "analysing" if previous_id is not None else None, meeting_id),
+        )
+        updated = conn.execute(
+            "SELECT * FROM meetings WHERE id = ?", (meeting_id,)
+        ).fetchone()
+
+    if previous_id is not None:
+        background_tasks.add_task(carry_forward_safe, meeting_id)
+    return MeetingResponse.model_validate(dict(updated))
+
+
+@router.get("/{meeting_id}/carry-forward", response_model=CarryForwardResponse)
+def get_carry_forward(meeting_id: int) -> CarryForwardResponse:
+    """What this meeting said about the previous meeting's action items."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT follow_up_of, carry_forward_status FROM meetings WHERE id = ?",
+            (meeting_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, f"Meeting {meeting_id} not found")
+        previous_id = row["follow_up_of"]
+        previous_title = None
+        if previous_id:
+            prev = conn.execute(
+                "SELECT title FROM meetings WHERE id = ?", (previous_id,)
+            ).fetchone()
+            previous_title = prev["title"] if prev else None
+        items = conn.execute(
+            "SELECT * FROM carry_forward WHERE meeting_id = ? ORDER BY id", (meeting_id,)
+        ).fetchall()
+
+    return CarryForwardResponse(
+        meeting_id=meeting_id,
+        previous_meeting_id=previous_id,
+        previous_meeting_title=previous_title,
+        status=row["carry_forward_status"],
+        items=[CarryForwardItemResponse.model_validate(dict(i)) for i in items],
+    )
+
+
+@router.post("/{meeting_id}/carry-forward", response_model=MeetingResponse, status_code=202)
+def rerun_carry_forward(
+    meeting_id: int, background_tasks: BackgroundTasks
+) -> MeetingResponse:
+    """Re-run the carry-forward analysis (e.g. after correcting the transcript,
+    or retrying a failed run)."""
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404, f"Meeting {meeting_id} not found")
+        if not row["follow_up_of"]:
+            raise HTTPException(
+                409, f"Meeting {meeting_id} is not linked to a previous meeting."
+            )
+        conn.execute(
+            "UPDATE meetings SET carry_forward_status = 'analysing', "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (meeting_id,),
+        )
+        updated = conn.execute(
+            "SELECT * FROM meetings WHERE id = ?", (meeting_id,)
+        ).fetchone()
+
+    background_tasks.add_task(carry_forward_safe, meeting_id)
+    return MeetingResponse.model_validate(dict(updated))
+
+
+@router.get("/{meeting_id}/export/combined")
+def export_meeting_combined(meeting_id: int) -> FileResponse:
+    """Download ONE Word document covering this meeting and every meeting it
+    follows up, including the progress made on each previous action item.
+
+    Uses the system's own combined layout rather than a user template: a user
+    template describes the shape of a SINGLE meeting's minutes, so there is no
+    meaningful way to fill one with a whole series.
+    """
+    from app.pipeline.export import export_combined_docx
+
+    try:
+        path = export_combined_docx(meeting_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+
+    return FileResponse(
+        path=str(path),
+        filename=path.name,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
 
 
 @router.get("/{meeting_id}/export/docx")

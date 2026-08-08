@@ -61,6 +61,28 @@ class ExtractedRisk(BaseModel):
     source_segment_ids: list[int] = Field(default_factory=list)
 
 
+CARRY_FORWARD_STATUSES = ("completed", "in_progress", "blocked", "changed", "not_discussed")
+
+
+class ExtractedCarryForward(BaseModel):
+    """One verdict on a PREVIOUS meeting's action item, read out of the
+    follow-up meeting's transcript.
+
+    `index` is the position of the action item in the numbered list we send the
+    model, NOT a database id - asking an 8B model to echo back arbitrary primary
+    keys invites transcription errors, whereas a small ordinal is reliable. The
+    caller maps it back to the real action item.
+    """
+    index: int = Field(description="1-based position in the previous-actions list we sent")
+    status: str = Field(
+        description="One of: completed, in_progress, blocked, changed"
+    )
+    note: str | None = Field(
+        default=None, description="Short evidence line, max ~20 words"
+    )
+    source_segment_ids: list[int] = Field(default_factory=list)
+
+
 class ChunkInsights(BaseModel):
     """What the LLM extracts from ONE transcript chunk (map step)."""
     # No min_length: we no longer use schema-constrained decoding (it ran ~10x
@@ -145,6 +167,32 @@ class InsightsResponse(BaseModel):
     deadlines: list[InsightItemResponse]
     issues: list[InsightItemResponse]
     risks: list[InsightItemResponse]
+
+
+class CarryForwardItemResponse(BaseModel):
+    id: int
+    previous_meeting_id: int
+    previous_action_id: int | None = None
+    description: str
+    owner: str | None = None
+    status: str
+    note: str | None = None
+    source_segment_id: int | None = None
+
+
+class CarryForwardResponse(BaseModel):
+    """The follow-up picture for one meeting: which earlier meeting it follows
+    and what happened to each of that meeting's action items."""
+    meeting_id: int
+    previous_meeting_id: int | None
+    previous_meeting_title: str | None = None
+    status: str | None = None        # None | 'analysing' | 'ready' | 'failed: <reason>'
+    items: list[CarryForwardItemResponse] = []
+
+
+class FollowUpUpdate(BaseModel):
+    """PATCH body for linking (or unlinking) a meeting to the one it follows."""
+    previous_meeting_id: int | None = None
 
 
 class InsightItemUpdate(BaseModel):

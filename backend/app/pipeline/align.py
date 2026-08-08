@@ -26,6 +26,17 @@ _align_model = None
 _align_metadata = None
 _loaded_language: str | None = None
 
+# WhisperX ships no default wav2vec2.0 alignment model for Bahasa Melayu, but
+# it does ship one for Indonesian - and the two languages share essentially the
+# same phoneme inventory and Latin orthography. Since alignment only asks WHEN
+# each sound occurred (never WHAT it meant), the Indonesian acoustic model
+# transfers to Malay cleanly and keeps word-level timestamps working for the
+# audio player. Without this, Malay meetings would fall through to the
+# no-word-timings path below. See DECISIONS.md 2026-08-07.
+_ALIGN_MODEL_OVERRIDES = {
+    "ms": "cahya/wav2vec2-large-xlsr-indonesian",
+}
+
 
 class UnsupportedAlignLanguage(Exception):
     """WhisperX has no default wav2vec2.0 alignment model for this language."""
@@ -34,8 +45,9 @@ class UnsupportedAlignLanguage(Exception):
 def get_align_model(language: str):
     """Load (and cache) the WhisperX alignment model for a given language.
 
-    Raises UnsupportedAlignLanguage if WhisperX has no default model for
-    the language (e.g. 'mi', 'sw', 'haw').
+    Raises UnsupportedAlignLanguage if WhisperX has no default model for the
+    language (e.g. 'mi', 'sw', 'haw') and we have no override for it, or if an
+    overridden model cannot be fetched.
     """
     global _align_model, _align_metadata, _loaded_language
     if _align_model is None or _loaded_language != language:
@@ -43,6 +55,7 @@ def get_align_model(language: str):
             _align_model, _align_metadata = whisperx.load_align_model(
                 language_code=language,
                 device=settings.whisper_device,
+                model_name=_ALIGN_MODEL_OVERRIDES.get(language),
             )
         except ValueError as exc:
             raise UnsupportedAlignLanguage(language) from exc

@@ -10,6 +10,11 @@ The schema captures:
   action_items, decisions, deadlines, issues, risks
             -> extracted insights, each linked back to a segment so we
                can prove the LLM didn't hallucinate.
+  carry_forward
+            -> when a meeting is marked as the follow-up of an earlier one,
+               each of the PREVIOUS meeting's action items gets a row here
+               recording what this meeting said about it (done / in progress /
+               blocked / changed / never mentioned), cited to a segment.
   templates -> user-uploaded Word export templates (IR §2.2.7); the
                .docx file itself lives in data/templates/<id>.docx.
 
@@ -36,6 +41,8 @@ CREATE TABLE IF NOT EXISTS meetings (
     expected_speakers INTEGER,         -- NULL = auto-detect (default)
     status TEXT NOT NULL DEFAULT 'uploaded',
     progress REAL,                     -- 0..1 within the current long stage (transcribe / categorize)
+    follow_up_of INTEGER REFERENCES meetings(id) ON DELETE SET NULL,  -- the meeting this one follows up
+    carry_forward_status TEXT,         -- NULL | 'analysing' | 'ready' | 'failed: <reason>'
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -110,6 +117,26 @@ CREATE TABLE IF NOT EXISTS risks (
     source_segment_id INTEGER REFERENCES segments(id)
 );
 
+-- One row per action item carried over from the PREVIOUS meeting, recording
+-- what the follow-up meeting said about it. `description`/`owner` are snapshots
+-- of the previous item's wording so the record survives later edits (or the
+-- deletion) of that item. `source_segment_id` points at the line in THIS
+-- meeting that evidences the verdict - the same anti-hallucination grounding
+-- the insight tables use.
+CREATE TABLE IF NOT EXISTS carry_forward (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    previous_meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    previous_action_id INTEGER,        -- action_items.id in the previous meeting (may later vanish)
+    description TEXT NOT NULL,         -- snapshot of the previous action's wording
+    owner TEXT,                        -- snapshot of the previous action's owner
+    status TEXT NOT NULL,              -- completed | in_progress | blocked | changed | not_discussed
+    note TEXT,                         -- short evidence line, in the meeting's output language
+    source_segment_id INTEGER REFERENCES segments(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_carry_forward_meeting ON carry_forward(meeting_id);
+
 CREATE TABLE IF NOT EXISTS templates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,                -- user-facing label, e.g. "Acme Corp minutes"
@@ -146,6 +173,14 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     # routing + UI notice), e.g. "en,zh".
     if not _has_column(conn, "meetings", "languages_detected"):
         conn.execute("ALTER TABLE meetings ADD COLUMN languages_detected TEXT")
+    # Session 22 (2026-08-07): follow-up meeting linking + carry-forward analysis.
+    # SQLite cannot add a column with a REFERENCES clause to an existing table,
+    # so on an older DB these are plain columns - the link is enforced in the
+    # route (existence, self-link and cycle checks) rather than by the engine.
+    if not _has_column(conn, "meetings", "follow_up_of"):
+        conn.execute("ALTER TABLE meetings ADD COLUMN follow_up_of INTEGER")
+    if not _has_column(conn, "meetings", "carry_forward_status"):
+        conn.execute("ALTER TABLE meetings ADD COLUMN carry_forward_status TEXT")
 
 
 @contextmanager

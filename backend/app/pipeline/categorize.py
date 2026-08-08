@@ -51,7 +51,11 @@ CHUNK_TOKEN_BUDGET = 4500
 # Rough chars-per-token heuristic for budgeting (English ~4, CJK denser).
 CHARS_PER_TOKEN = 4
 
-LANGUAGE_NAMES = {"en": "English", "zh": "Chinese (Simplified)"}
+LANGUAGE_NAMES = {
+    "en": "English",
+    "zh": "Chinese (Simplified)",
+    "ms": "Malay (Bahasa Melayu)",
+}
 
 
 class OllamaUnavailable(RuntimeError):
@@ -286,8 +290,12 @@ def _coerce_items(raw_list, model):
             obj = model.model_validate(it)
         except Exception:  # noqa: BLE001
             continue
-        if not (getattr(obj, "description", "") or "").strip():
-            continue  # the 8B occasionally emits a blank-description row - drop it
+        # The 8B occasionally emits a blank-description row - drop it. Guarded on
+        # the model actually HAVING a description, so this helper stays reusable
+        # for shapes that carry no description at all (e.g. carry-forward
+        # verdicts, which reference a previous item by index).
+        if "description" in model.model_fields and not (obj.description or "").strip():
+            continue
         out.append(obj)
     return out
 
@@ -342,17 +350,28 @@ def _ensure_summary(summary: str, chunk_results: list, action_items: list, decis
 
 # Tokens the 8B uses to mean "no due date"; a 'due' whose first word is one of these
 # (e.g. 'null', 'none', even 'null (immediate)') is treated as empty.
-_DUE_NULLISH = {"null", "none", "n/a", "na", "tbd", "unknown", "无", "没有", "未定"}
+_DUE_NULLISH = {"null", "none", "n/a", "na", "tbd", "unknown", "无", "没有", "未定",
+                "tiada", "tidak", "belum"}
 
 # Date / time expressions that signal a deadline, scanned in an action item's
 # wording. The 8B fills the structured 'due' field erratically but reliably keeps
 # the date in the sentence ('...by Friday'), so we read the sentence too. EN + ZH
-# (the IR's target languages). Recall-biased: a stray deadline is harmless and
-# editable; a MISSED one was the graded failure (mtg 28). Only ACTION ITEMS are
-# scanned - not decisions (so 'postpone by one week' is not mistaken for a deadline).
+# + MS (Bahasa Melayu, added 2026-08-07). Recall-biased: a stray deadline is
+# harmless and editable; a MISSED one was the graded failure (mtg 28). Only
+# ACTION ITEMS are scanned - not decisions (so 'postpone by one week' is not
+# mistaken for a deadline).
+# NOTE: every group here MUST stay non-capturing - _extract_date_cues() uses
+# re.findall, which returns group contents instead of whole matches if any
+# capturing group exists.
 _WD = r"monday|tuesday|wednesday|thursday|friday|saturday|sunday"
 _MON = (r"january|february|march|april|may|june|july|august|september|october|"
         r"november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec")
+# Malay weekdays and months. 'Mac' (March) and 'Mei' (May) are short and could
+# collide with ordinary words, so they are only ever matched next to a number.
+_MS_WD = r"isnin|selasa|rabu|khamis|jumaat|sabtu|ahad"
+_MS_MON = (r"januari|februari|mac|april|mei|jun|julai|ogos|september|oktober|"
+           r"november|disember")
+_MS_NUM = r"satu|dua|tiga|empat|lima|enam|tujuh|lapan|sembilan|sepuluh|\d+"
 _DATE_RE = re.compile("|".join([
     rf"\b(?:by|before|on|due)\s+(?:next\s+|this\s+)?(?:{_WD})\b",
     rf"\b(?:this|next)\s+(?:{_WD})\b",
@@ -374,13 +393,31 @@ _DATE_RE = re.compile("|".join([
     r"\d{1,2}\s*[号日]",
     r"(?:一|两|二|三|四|五|\d+)\s*(?:天|周|个?星期|个月)",
     r"(?:第[一二三四1234]|下个?|这个?)?季度",
+    # --- Bahasa Melayu ---
+    rf"\b(?:sebelum|menjelang|pada|hari)\s+(?:{_MS_WD})\b",
+    rf"\b(?:{_MS_WD})\b",
+    r"\b(?:hari\s+ini|malam\s+ini|esok|besok|lusa)\b",
+    r"\b(?:minggu|bulan|suku\s+tahun)\s+(?:ini|depan|hadapan)\b",
+    r"\bhujung\s+(?:minggu|bulan|tahun)\b",
+    r"\bakhir\s+(?:minggu|bulan|tahun)\s+(?:ini|depan|hadapan)\b",
+    rf"\b(?:dalam|sebelum)\s+(?:{_MS_NUM})\s+(?:hari|minggu|bulan)\b",
+    rf"\b(?:{_MS_NUM})\s+(?:hari|minggu|bulan)\s+(?:lagi|depan|hadapan)\b",
+    rf"\b\d{{1,2}}\s+(?:{_MS_MON})\b",
+    rf"\b(?:{_MS_MON})\s+\d{{1,2}}\b",
 ]), re.IGNORECASE)
 # Leading prepositions/articles stripped before comparing two date cues for dedup
-# (so 'by Friday' and 'Friday' count as the same date).
-_DATE_LEAD = re.compile(r"^(?:by|before|on|due|this|next|the|in|within)\s+", re.IGNORECASE)
+# (so 'by Friday' and 'Friday' count as the same date). The Malay 'hari' is only
+# stripped before a weekday, so 'hari ini' (today) is never reduced to 'ini'.
+_DATE_LEAD = re.compile(
+    r"^(?:by|before|on|due|this|next|the|in|within"
+    rf"|sebelum|menjelang|pada|dalam|hari(?=\s+(?:{_MS_WD})))\s+",
+    re.IGNORECASE,
+)
 # Leading words stripped from a cue for DISPLAY ('on Thursday' -> 'Thursday', 'by
 # Friday' -> 'Friday'); 'this/next/end of' are kept because they carry meaning.
-_DISPLAY_LEAD = re.compile(r"^(?:by|on|before|due)\s+", re.IGNORECASE)
+_DISPLAY_LEAD = re.compile(
+    r"^(?:by|on|before|due|sebelum|menjelang|pada)\s+", re.IGNORECASE
+)
 
 
 def _norm_date(s: str | None) -> str:
@@ -443,10 +480,12 @@ def _augment_deadlines(deadlines: list, action_items: list) -> list:
 
 
 # First-person self-assignment cues: when the speaker of a cited line says one of
-# these, that speaker is reliably the action's owner (EN + ZH).
+# these, that speaker is reliably the action's owner (EN + ZH + MS).
 _SELF_ASSIGN = re.compile(
     r"\b(?:i'?ll|i will|i can|i'?ve|i'?m going to|i shall|i'?d|let me)\b"
-    r"|我来|我会|我负责|我可以|我去|由我|我把|我处理",
+    r"|我来|我会|我负责|我可以|我去|由我|我把|我处理"
+    r"|\b(?:saya\s+(?:akan|boleh|nak|akan\s+buat|uruskan|urus|handle|ambil|jaga|"
+    r"sediakan|hantar)|biar\s+saya|aku\s+(?:akan|boleh))\b",
     re.IGNORECASE,
 )
 
@@ -470,12 +509,17 @@ def _attribute_owners(action_items, seg_by_id, speaker_labels) -> None:
 
 
 # Lines likely to contain a risk or issue - used to gather candidate segments for
-# the focused recovery pass (the 8B under-extracts these categories). EN + ZH.
+# the focused recovery pass (the 8B under-extracts these categories).
+# EN + ZH + MS (Bahasa Melayu, added 2026-08-07).
 _RISK_CUE = re.compile(
     r"\b(?:if|unless|might|may|could|risk|risky|concern|concerned|worried|worry|"
     r"fail|fails|failing|delay|delayed|behind|blocker|blocked|issue|problem|"
     r"unable|can'?t|cannot|shortage|exceed|overrun|bottleneck|not enough)\b"
-    r"|风险|如果|可能|担心|忧虑|问题|延迟|延误|失败|不够|赶不上|超出|瓶颈|阻碍|来不及",
+    r"|风险|如果|可能|担心|忧虑|问题|延迟|延误|失败|不够|赶不上|超出|瓶颈|阻碍|来不及"
+    r"|\b(?:risiko|berisiko|jika|kalau|sekiranya|andai|mungkin|bimbang|risau|"
+    r"khuatir|masalah|bermasalah|isu|lewat|kelewatan|tertunda|gagal|kegagalan|"
+    r"halangan|terhalang|tersekat|kekurangan|melebihi|tidak\s+cukup|tak\s+cukup|"
+    r"tidak\s+dapat|tak\s+dapat|tak\s+sempat|belum\s+selesai)\b",
     re.IGNORECASE,
 )
 

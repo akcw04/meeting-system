@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   audioUrl,
+  combinedExportUrl,
   exportUrl,
   fetchAllSegments,
   fetchSpeakers,
@@ -15,6 +16,7 @@ import {
 import TranscriptList, { type TranscriptListHandle } from "../components/TranscriptList";
 import SpeakersPanel from "../components/SpeakersPanel";
 import InsightsPanel from "../components/InsightsPanel";
+import FollowUpPanel from "../components/FollowUpPanel";
 import ProgressBar from "../components/ProgressBar";
 import { useCollapse } from "../components/useCollapse";
 
@@ -193,6 +195,7 @@ export default function ReviewPage({
           ← Back to meetings
         </button>
         <h1>{meeting.data?.title ?? `Meeting ${meetingId}`}</h1>
+        <LanguageChip codes={meeting.data?.languages_detected ?? null} />
 
         <div className="searchbox">
           <input
@@ -238,18 +241,32 @@ export default function ReviewPage({
           >
             <button disabled={!hasTranscript}>Export Word</button>
           </a>
+          {/* Only offered once a previous meeting is linked — a "combined"
+              document of one meeting would just be the ordinary export. */}
+          {meeting.data?.follow_up_of && (
+            <a href={combinedExportUrl(meetingId)} download>
+              <button
+                className="ghost"
+                disabled={!hasTranscript}
+                title="One document covering this meeting and every meeting it follows up, including progress on the previous actions"
+              >
+                Export combined
+              </button>
+            </a>
+          )}
         </div>
       </div>
 
       {hasTranscript && introOpen && (
         <div className="review-intro">
           <button className="review-intro-x" onClick={dismissIntro} aria-label="Dismiss this tip">×</button>
-          <div className="review-intro-title">New here? This page has four parts</div>
+          <div className="review-intro-title">New here? This page has five parts</div>
           <ol className="review-intro-zones">
             <li><b>① Transcript</b> — click a line's time to play just that line; click its text to edit.</li>
             <li><b>② Audio</b> — press ▶ for continuous playback; the spoken line follows along.</li>
             <li><b>③ Speakers</b> — rename a speaker once; it updates everywhere.</li>
             <li><b>④ Insights &amp; export</b> — generate the summary, then pick a template and Export Word (top-right).</li>
+            <li><b>⑤ Follow-up</b> — link an earlier meeting to see what happened to everything agreed there, and export both as one document.</li>
           </ol>
         </div>
       )}
@@ -317,8 +334,47 @@ export default function ReviewPage({
             meetingStatus={meeting.data?.status ?? ""}
             onJumpToSegment={jumpToSegment}
           />
+          {hasTranscript && (
+            <FollowUpPanel
+              meetingId={meetingId}
+              meeting={meeting.data}
+              onJumpToSegment={jumpToSegment}
+            />
+          )}
         </div>
       </div>
     </div>
+  );
+}
+
+/** Human names for the languages the system transcribes. */
+const LANG_NAMES: Record<string, string> = {
+  en: "English",
+  ms: "Malay",
+  zh: "Mandarin",
+};
+
+/** Shows which languages the recording actually turned out to contain.
+ *
+ * With three supported languages, a Malaysian meeting that code-switches is
+ * the normal case rather than the exception — so this chip is the user's
+ * confirmation that the mixing was recognised, and that a line reading in
+ * another language is faithful capture rather than a transcription error. */
+function LanguageChip({ codes }: { codes: string | null }) {
+  const list = (codes ?? "").split(",").map((c) => c.trim()).filter(Boolean);
+  if (list.length === 0) return null;
+  const names = list.map((c) => LANG_NAMES[c] ?? c).join(" + ");
+  const mixed = list.length > 1;
+  return (
+    <span
+      className={`lang-chip ${mixed ? "mixed" : ""}`}
+      title={
+        mixed
+          ? "This recording switches between languages. Every transcript line is kept in the language it was spoken, so you can check it against the audio."
+          : "Only one language was detected in this recording."
+      }
+    >
+      {mixed ? `Mixed: ${names}` : names}
+    </span>
   );
 }

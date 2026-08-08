@@ -45,8 +45,10 @@ works normally.
 AFTER INSTALLING
 ----------------
 
-Kairos appears in your Start Menu. Open it, wait for the two black windows
-to finish starting, then go to http://localhost:5173 in your browser.
+Kairos appears in your Start Menu and on your desktop. Open it and wait -
+it starts the system and then opens Kairos in your browser for you. The
+first start takes a minute or two. Press Enter in the Kairos window when
+you are finished, to shut it down.
 
 To remove Kairos later, use Windows Settings > Apps > Installed apps. Please
 note that uninstalling also deletes any meetings you have processed, so

@@ -57,8 +57,9 @@ _STARTUP_BANNER = r"""
   Author      : Annie Kiu Chi Wen (TP070557)
   Programme   : BSc (Hons) Software Engineering, APU
   Description : A fully-local AI system that transcribes,
-                diarizes and categorizes bilingual
-                (English-Mandarin) meeting recordings.
+                diarizes and categorizes code-switched
+                (English / Bahasa Melayu / Mandarin)
+                meeting recordings.
 ============================================================
 """
 

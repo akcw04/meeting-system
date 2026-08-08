@@ -14,9 +14,10 @@ field we look, in this order:
   3. MARKER - still supported for precise inline placement: a plain-English
      [[Date]] or [[Summary]] dropped exactly where the value should go.
 
-Recognised names work in English and Chinese and are case-insensitive. Loose
-matching is gated to short, label-like lines so it never fires inside a
-sentence. We only INSERT content (never restyle), so fonts/layout are preserved.
+Recognised names work in English, Chinese and Bahasa Melayu, and are
+case-insensitive. Loose matching is gated to short, label-like lines so it never
+fires inside a sentence. We only INSERT content (never restyle), so fonts and
+layout are preserved.
 
 `fill_user_document` returns the saved path + a report of which fields were
 placed (and how) and which had data but found no spot.
@@ -34,35 +35,64 @@ from docx.text.paragraph import Paragraph
 from app.config import settings
 from app.pipeline.export import TemplateRenderError, _slug, build_meeting_context
 
-# --- recognised field names (headings AND [[markers]]), English + Chinese ---
+# --- recognised field names (headings AND [[markers]]) ---
+# English + Chinese + Bahasa Melayu (added 2026-08-07, so a Malaysian
+# organisation can lay its house template out in its own working language).
 _FIELD_SYNONYMS = {
     "title": ["meeting title", "title", "meeting name", "subject", "meeting subject",
-              "会议标题", "标题", "会议主题", "主题"],
-    "date": ["date", "meeting date", "日期", "会议日期"],
-    "duration": ["duration", "length", "会议时长", "时长"],
-    "language": ["language", "languages", "语言"],
+              "会议标题", "标题", "会议主题", "主题",
+              "tajuk", "tajuk mesyuarat", "nama mesyuarat"],
+    "date": ["date", "meeting date", "日期", "会议日期",
+             "tarikh", "tarikh mesyuarat"],
+    "duration": ["duration", "length", "会议时长", "时长",
+                 "tempoh", "tempoh mesyuarat", "jangka masa"],
+    "language": ["language", "languages", "语言", "bahasa"],
     "participants": ["participant count", "number of participants", "no of participants",
-                     "no. of participants", "headcount", "人数", "参与人数", "与会人数", "出席人数"],
+                     "no. of participants", "headcount", "人数", "参与人数", "与会人数", "出席人数",
+                     "bilangan peserta", "jumlah peserta", "bilangan kehadiran"],
     "attendees": ["attendees", "attendee", "participants", "participant", "present",
-                  "attendance", "出席", "出席人员", "与会者", "参与者", "参会人员", "参加人员"],
+                  "attendance", "出席", "出席人员", "与会者", "参与者", "参会人员", "参加人员",
+                  "kehadiran", "hadirin", "peserta", "yang hadir", "ahli hadir",
+                  "senarai kehadiran"],
     "summary": ["summary", "meeting summary", "overview", "abstract", "executive summary",
-                "摘要", "会议摘要", "概要", "总结", "会议总结", "内容摘要"],
+                "摘要", "会议摘要", "概要", "总结", "会议总结", "内容摘要",
+                "ringkasan", "ringkasan mesyuarat", "rumusan", "intisari"],
     "action_items": ["action items", "action item", "actions", "action points", "action plan",
                      "tasks", "task list", "to-do", "to do", "todo", "follow-ups", "follow ups",
-                     "行动项", "行动事项", "待办", "待办事项", "任务", "任务清单", "行动计划", "跟进事项"],
+                     "行动项", "行动事项", "待办", "待办事项", "任务", "任务清单", "行动计划", "跟进事项",
+                     "tindakan", "senarai tindakan", "tindakan susulan", "perkara tindakan",
+                     "tugasan", "senarai tugasan"],
     "decisions": ["key decisions", "decisions", "decision", "decisions made", "resolutions",
-                  "agreements", "决策", "决定", "关键决策", "议决", "决议", "达成的决定"],
+                  "agreements", "决策", "决定", "关键决策", "议决", "决议", "达成的决定",
+                  "keputusan", "keputusan penting", "ketetapan", "resolusi"],
     "deadlines": ["deadlines", "deadline", "due dates", "due date", "timeline", "timelines",
-                  "key dates", "schedule", "期限", "截止日期", "截止时间", "时间表", "时间节点", "重要日期"],
+                  "key dates", "schedule", "期限", "截止日期", "截止时间", "时间表", "时间节点", "重要日期",
+                  "tarikh akhir", "tarikh tutup", "garis masa", "jadual", "tempoh masa"],
     "issues": ["technical issues", "issues", "issue", "problems", "problem", "roadblocks",
-               "blockers", "challenges", "技术问题", "问题", "障碍", "技术难题", "待解决问题", "难点"],
+               "blockers", "challenges", "技术问题", "问题", "障碍", "技术难题", "待解决问题", "难点",
+               "isu", "isu teknikal", "masalah", "permasalahan", "kekangan"],
     "risks": ["risks", "risk", "risks and mitigations", "risk and mitigation",
-              "风险", "风险与缓解", "风险点", "潜在风险", "隐患"],
+              "风险", "风险与缓解", "风险点", "潜在风险", "隐患",
+              "risiko", "potensi risiko", "risiko dan langkah"],
+    # Progress on the PREVIOUS meeting's action items - filled only when this
+    # meeting is linked as a follow-up. "Matters arising" and its Malay
+    # equivalent "Perkara berbangkit" are the headings real corporate minutes
+    # actually use for this section, so they matter more than a literal
+    # translation of "carry forward".
+    "carry_forward": ["matters arising", "progress since last meeting",
+                      "previous action items", "previous actions", "outstanding actions",
+                      "carry forward", "carried forward", "follow-up on previous meeting",
+                      "review of previous minutes",
+                      "上次会议跟进", "上次会议回顾", "前次行动项", "上次行动事项",
+                      "perkara berbangkit", "kemajuan tindakan lepas",
+                      "tindakan mesyuarat lepas"],
     "transcript": ["transcript", "full transcript", "meeting transcript", "verbatim", "minutes",
-                   "逐字稿", "全文", "会议记录", "记录", "完整记录", "会议全文"],
+                   "逐字稿", "全文", "会议记录", "记录", "完整记录", "会议全文",
+                   "transkrip", "transkrip penuh", "minit penuh", "catatan", "rekod mesyuarat"],
 }
 _SCALAR = {"title", "date", "duration", "language", "participants", "attendees"}
-_BLOCK = {"summary", "action_items", "decisions", "deadlines", "issues", "risks", "transcript"}
+_BLOCK = {"summary", "action_items", "decisions", "deadlines", "issues", "risks",
+          "carry_forward", "transcript"}
 
 _MARKER = re.compile(r"\[\[\s*(.+?)\s*\]\]")
 
@@ -171,6 +201,9 @@ def _block_plaintext(key: str, ctx: dict) -> str:
     if key == "risks":
         return "; ".join(r["description"] + (f" (Mitigation: {r['mitigation']})" if r.get("mitigation") else "")
                          for r in ctx["risks"]) or "None recorded."
+    if key == "carry_forward":
+        return "; ".join(f"{c['description']} — {c['status']}"
+                         for c in ctx["carry_forward"]) or "No previous meeting linked."
     if key == "transcript":
         return " / ".join(f"[{s['time']}] {s['speaker']}: {s['text']}" for s in ctx["transcript"])
     return ""
@@ -239,6 +272,21 @@ def _insert_field(doc, anchor: Paragraph, key: str, ctx: dict) -> None:
                  d["description"] + (f"  [{d['source']}]" if d.get("source") else ""),
                  d.get("date") or "-"] for i, d in enumerate(items, 1)]
         _insert_table_after(doc, anchor, ["No.", "Deadline", "Date"], rows)
+        return
+    if key == "carry_forward":
+        items = ctx["carry_forward"]
+        if not items:
+            _insert_paragraph_after(
+                anchor, "No previous meeting is linked to this one.", italic=True
+            )
+            return
+        rows = [[str(i),
+                 c["description"] + (f"  [{c['source']}]" if c.get("source") else ""),
+                 c.get("owner") or "-", c["status"], c.get("note") or "-"]
+                for i, c in enumerate(items, 1)]
+        _insert_table_after(
+            doc, anchor, ["No.", "Action agreed previously", "Owner", "Status", "Evidence"], rows
+        )
         return
     if key in ("decisions", "issues", "risks"):
         items = ctx[key]
@@ -402,7 +450,10 @@ def _data_fields(ctx: dict) -> list[str]:
     fields = ["title", "date", "duration", "language", "participants", "summary", "transcript"]
     if ctx["attendees"]:
         fields.append("attendees")
-    for key in ("action_items", "decisions", "deadlines", "issues", "risks"):
+    # carry_forward is listed only when this meeting IS a follow-up - otherwise
+    # every ordinary template would be reported as "missing" a section that has
+    # no data to put in it.
+    for key in ("action_items", "decisions", "deadlines", "issues", "risks", "carry_forward"):
         if ctx[key]:
             fields.append(key)
     return fields

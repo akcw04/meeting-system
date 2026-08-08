@@ -1,8 +1,8 @@
 <#
     Kairos - one-command setup (Windows)
     ============================================
-    Automates the manual steps in docs/INSTALL.md so a new user goes from a
-    fresh clone to a runnable system with a single command:
+    Takes a new machine from a fresh clone to a runnable system with a single
+    command, doing by hand what would otherwise be a dozen ordered steps:
 
         powershell -ExecutionPolicy Bypass -File setup.ps1
 
@@ -58,7 +58,7 @@ Step "Checking prerequisites"
 if (Has "python") {
     $pyv = (python --version 2>&1).ToString().Trim()
     Ok "Python found: $pyv"
-    if ($pyv -notmatch "3\.13") { Warn "INSTALL.md expects Python 3.13.x - you have '$pyv'. It may still work, but 3.13 is what was tested." }
+    if ($pyv -notmatch "3\.13") { Warn "This project was built and tested on Python 3.13.x - you have '$pyv'. It may still work, but 3.13 is the tested version." }
 } else {
     Warn "Python NOT found. Install Python 3.13 from https://www.python.org/downloads/ (tick 'Add python.exe to PATH'), then re-run."
     Write-Host "`nCannot continue without Python. Stopping." -ForegroundColor Red
@@ -66,7 +66,7 @@ if (Has "python") {
 }
 
 if (Has "ffmpeg") { Ok "FFmpeg found" } else {
-    Warn "FFmpeg NOT found on PATH. Install it (see docs/INSTALL.md 'FFmpeg install') or set FFMPEG_PATH in backend/.env. Uploads will fail without it."
+    Warn "FFmpeg NOT found on PATH. Download the 'essentials' build from https://www.gyan.dev/ffmpeg/builds/, extract it so ffmpeg.exe sits at C:\ffmpeg\bin\ffmpeg.exe, and add C:\ffmpeg\bin to your user PATH. Do NOT put it under a OneDrive-synced folder. Alternatively set FFMPEG_PATH in backend/.env. Uploads will fail without it."
 }
 if (Has "ollama") { Ok "Ollama found" } else {
     Warn "Ollama NOT found. Install from https://ollama.com/download - needed to generate meeting insights."
@@ -206,6 +206,6 @@ if ($script:Warnings.Count -gt 0) {
 }
 
 Write-Host "`nTo start the system:" -ForegroundColor Green
-Say "  powershell -ExecutionPolicy Bypass -File run.ps1"
-Say "  (or start backend and frontend manually - see docs/INSTALL.md)"
-Say "Then open http://localhost:5173 in your browser."
+Say "  double-click Kairos.bat"
+Say "  (or: powershell -ExecutionPolicy Bypass -File run.ps1)"
+Say "It opens Kairos in your browser once both servers are ready."

@@ -5,8 +5,13 @@ First call downloads the model into `data/models/` (~480 MB for 'small',
 
 By default we auto-detect the language, but the caller can force one via the
 `language` argument. The runner passes the user's `primary_language` when it
-is 'en'/'zh' (added after bug #13, where auto-detect misfired to Maori on a
-long English meeting). 'auto' still lets Whisper detect per audio.
+is a supported language (added after bug #13, where auto-detect misfired to
+Maori on a long English meeting). 'auto' still lets Whisper detect per audio.
+
+Languages: English, Mandarin and Bahasa Melayu, in any combination. A
+Malaysian meeting routinely mixes all three in one sentence, so the
+code-switch path (`transcribe_codeswitch`) is language-count-agnostic rather
+than the fixed EN/ZH pair it started as.
 """
 from __future__ import annotations
 
@@ -16,6 +21,25 @@ import soundfile as sf
 from faster_whisper import BatchedInferencePipeline, WhisperModel
 
 from app.config import settings
+
+
+# Languages the system transcribes and can mix within one recording.
+# 'ms' (Bahasa Melayu) joined 'en'/'zh' on 2026-08-07 - see DECISIONS.md.
+SUPPORTED_LANGUAGES: tuple[str, ...] = ("en", "zh", "ms")
+
+# Whisper treats Malay and Indonesian as near-identical (they share most of
+# their phonology and orthography) and will happily label Malaysian speech
+# 'id'. Since this system targets Malaysian meetings and does NOT offer
+# Indonesian as a separate output language, an 'id' detection is folded into
+# 'ms' rather than discarded - otherwise genuine Malay segments would be
+# dropped from the code-switch routing entirely.
+_LANGUAGE_ALIASES = {"id": "ms"}
+
+
+def canonical_language(lang: str | None) -> str:
+    """Fold a Whisper-reported code onto the language the system works in."""
+    code = (lang or "").lower().strip()
+    return _LANGUAGE_ALIASES.get(code, code)
 
 
 _whisper_model: WhisperModel | None = None
@@ -48,14 +72,14 @@ def detect_languages(
     windows: int = 10,
     window_seconds: float = 25.0,
     min_prob: float = 0.3,
-    candidates: tuple[str, ...] = ("en", "zh"),
+    candidates: tuple[str, ...] = SUPPORTED_LANGUAGES,
 ) -> list[str]:
     """Sample windows across the audio and detect each window's spoken language.
 
-    Used to spot code-switched recordings (the IR's English-Mandarin headline)
-    BEFORE transcription, so the runner can route them (e.g. translate a mixed
-    meeting to a single output language). Reads only the sampled windows (not
-    the whole file) so it stays cheap on multi-hour recordings.
+    Used to spot code-switched recordings (English, Mandarin and Bahasa Melayu
+    in any combination) BEFORE transcription, so the runner can route them.
+    Reads only the sampled windows (not the whole file) so it stays cheap on
+    multi-hour recordings.
 
     Returns the per-window detected languages that cleared `min_prob` and are in
     `candidates` - duplicates kept, so the caller can read both the SET of
@@ -82,7 +106,9 @@ def detect_languages(
                     res = model.detect_language(chunk)
                 except Exception:
                     continue
-                lang = res[0] if isinstance(res, (tuple, list)) else res
+                lang = canonical_language(
+                    res[0] if isinstance(res, (tuple, list)) else res
+                )
                 prob = res[1] if isinstance(res, (tuple, list)) and len(res) > 1 else 1.0
                 if lang in candidates and (prob is None or prob >= min_prob):
                     found.append(lang)
@@ -153,8 +179,9 @@ def transcribe(
 
     # When translating, the produced TEXT is English regardless of what was
     # spoken - so the output language (used for alignment + stored per segment)
-    # is 'en', not the source language Whisper detected.
-    output_lang = "en" if task == "translate" else info.language
+    # is 'en', not the source language Whisper detected. An auto-detected 'id'
+    # is folded to 'ms' (see _LANGUAGE_ALIASES).
+    output_lang = "en" if task == "translate" else canonical_language(info.language)
 
     out: list[dict] = []
     for seg in segments_iter:
@@ -174,7 +201,7 @@ def transcribe(
 def transcribe_codeswitch(
     audio_path: Path,
     dominant: str,
-    candidates: tuple[str, ...] = ("en", "zh"),
+    candidates: tuple[str, ...] = SUPPORTED_LANGUAGES,
     progress_callback=None,
 ) -> tuple[list[dict], str]:
     """Accurate transcription of a code-switched (mixed-language) recording.
@@ -183,18 +210,27 @@ def transcribe_codeswitch(
     displayed transcript faithfully shows what was captured - which is what lets
     users verify accuracy and trust the system (DECISIONS 2026-06-21).
 
-    Strategy - TWO FULL passes (not short per-segment clips, which lose context
-    and mis-hear, e.g. "我" -> "宝宝"):
-      1. the DOMINANT language over the whole file -> defines the segmentation;
-      2. the OTHER language over the whole file -> full-context text for the
-         minority-language parts.
-    Each segment is language-detected on its audio, but only flipped on a
-    CONFIDENT result (so a dominant-language line isn't turned into the wrong
-    language). Minority segments take their text from the second pass, matched by
-    time overlap. Returns (segments, dominant_language).
+    Strategy - ONE FULL PASS PER LANGUAGE ACTUALLY PRESENT (not short
+    per-segment clips, which lose context and mis-hear, e.g. "我" -> "宝宝"):
+      1. the DOMINANT language over the whole file -> defines the segmentation
+         we keep;
+      2. for EACH minority language detected in the audio, another full pass in
+         that language -> full-context text for that language's parts.
+    Each segment is language-detected on its own audio and only flipped on a
+    CONFIDENT result, so a dominant-language line is never turned into the wrong
+    language. Minority segments take their text from their own language's pass,
+    matched by time overlap.
+
+    Generalised from the original fixed EN/ZH pair (2026-08-07) so a Malaysian
+    meeting mixing English, Mandarin AND Bahasa Melayu is transcribed correctly
+    in all three. Cost scales with the number of languages genuinely present -
+    a pass is only run for a language some segment was confidently detected as,
+    so a single-language stretch never pays for languages that never occur.
+
+    Returns (segments, dominant_language).
     """
     model = get_whisper_model()
-    other = next((c for c in candidates if c != dominant), None)
+    others = [c for c in candidates if c != dominant]
     # Pass 1: whole file in the dominant language (sequential, not batched - the
     # batched pipeline merges turns into very coarse segments for some audio).
     # This pass defines the segmentation we keep.
@@ -202,12 +238,13 @@ def transcribe_codeswitch(
         audio_path, language=dominant, task="transcribe",
         allow_batched=False, progress_callback=progress_callback,
     )
-    if not other or not segments:
+    if not others or not segments:
         return segments, dominant
 
-    # Which segments are actually the OTHER language? Detect on each segment's
-    # audio; only flip on a confident result so dominant lines aren't mislabelled.
-    minority: list[int] = []
+    # Which segments are a NON-dominant language, and which one? Detect on each
+    # segment's audio; only flip on a confident result so dominant lines aren't
+    # mislabelled. Grouped by language so each language is passed over once.
+    minority_by_lang: dict[str, list[int]] = {}
     try:
         with sf.SoundFile(str(audio_path)) as f:
             sr = f.samplerate
@@ -223,41 +260,54 @@ def transcribe_codeswitch(
                     res = model.detect_language(chunk)
                 except Exception:
                     continue
-                lang = res[0] if isinstance(res, (tuple, list)) else res
+                lang = canonical_language(
+                    res[0] if isinstance(res, (tuple, list)) else res
+                )
                 prob = res[1] if isinstance(res, (tuple, list)) and len(res) > 1 else 1.0
-                if lang == other and (prob is None or prob >= 0.55):
-                    minority.append(i)
+                if lang in others and (prob is None or prob >= 0.55):
+                    minority_by_lang.setdefault(lang, []).append(i)
     except Exception as exc:  # best-effort; fall back to the dominant-only pass
         print(f"[codeswitch] language detection skipped ({type(exc).__name__}: {exc})")
         return segments, dominant
 
-    if not minority:
+    if not minority_by_lang:
         return segments, dominant
 
-    # Pass 2: the OTHER language over the WHOLE file (full context = far fewer
-    # mis-hears than re-transcribing each short clip alone), then graft its text
-    # onto the minority segments by time overlap (greedy; no clip reused twice).
-    other_segs, _ = transcribe(audio_path, language=other, task="transcribe", allow_batched=False)
-    used: set[int] = set()
-    fixed = 0
-    for i in minority:
-        a, b = segments[i]["start_seconds"], segments[i]["end_seconds"]
-        parts: list[str] = []
-        for j, o in enumerate(other_segs):
-            if j in used:
-                continue
-            odur = o["end_seconds"] - o["start_seconds"]
-            overlap = min(o["end_seconds"], b) - max(o["start_seconds"], a)
-            # graft an other-language segment only if it MOSTLY sits inside this
-            # segment - stops one long spanning run from being pulled in whole.
-            if odur > 0 and overlap > 0.5 * odur:
-                parts.append(o["text"].strip())
-                used.add(j)
-        text = " ".join(p for p in parts if p).strip()
-        if text:
-            segments[i]["text"] = text
-            segments[i]["language"] = other
-            fixed += 1
-    if fixed:
-        print(f"[codeswitch] filled {fixed} minority-language segment(s) from a full {other} pass")
+    print(
+        f"[codeswitch] dominant={dominant}; minority segments: "
+        + ", ".join(f"{lang}={len(idx)}" for lang, idx in sorted(minority_by_lang.items()))
+    )
+
+    # One full pass per minority language over the WHOLE file (full context =
+    # far fewer mis-hears than re-transcribing each short clip alone), then
+    # graft its text onto that language's segments by time overlap. `used` is
+    # per-pass: a clip from one language's pass is never reused twice, but the
+    # passes are independent of each other.
+    for lang in sorted(minority_by_lang, key=lambda k: -len(minority_by_lang[k])):
+        indices = minority_by_lang[lang]
+        other_segs, _ = transcribe(
+            audio_path, language=lang, task="transcribe", allow_batched=False
+        )
+        used: set[int] = set()
+        fixed = 0
+        for i in indices:
+            a, b = segments[i]["start_seconds"], segments[i]["end_seconds"]
+            parts: list[str] = []
+            for j, o in enumerate(other_segs):
+                if j in used:
+                    continue
+                odur = o["end_seconds"] - o["start_seconds"]
+                overlap = min(o["end_seconds"], b) - max(o["start_seconds"], a)
+                # graft an other-language segment only if it MOSTLY sits inside
+                # this segment - stops one long spanning run being pulled in whole.
+                if odur > 0 and overlap > 0.5 * odur:
+                    parts.append(o["text"].strip())
+                    used.add(j)
+            text = " ".join(p for p in parts if p).strip()
+            if text:
+                segments[i]["text"] = text
+                segments[i]["language"] = lang
+                fixed += 1
+        if fixed:
+            print(f"[codeswitch] filled {fixed} segment(s) from a full {lang} pass")
     return segments, dominant

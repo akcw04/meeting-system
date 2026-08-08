@@ -13,7 +13,8 @@ from pydantic import BaseModel, ConfigDict, Field
 # 'auto' = LLM picks dominant language for summary
 # 'en' = force English summary
 # 'zh' = force Mandarin summary
-PrimaryLanguage = Literal["auto", "en", "zh"]
+# 'ms' = force Bahasa Melayu summary
+PrimaryLanguage = Literal["auto", "en", "zh", "ms"]
 
 
 class HealthResponse(BaseModel):
@@ -43,6 +44,8 @@ class MeetingResponse(BaseModel):
     expected_speakers: int | None
     status: str
     progress: float | None = None   # 0..1 within the current long stage; null when idle
+    follow_up_of: int | None = None       # id of the meeting this one follows up, if any
+    carry_forward_status: str | None = None  # null | 'analysing' | 'ready' | 'failed: <reason>'
     created_at: datetime
     updated_at: datetime
 

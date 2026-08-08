@@ -269,6 +269,15 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-soft
 }
 .review-head h1 { font-size: 16px; margin: 0; flex: 1; min-width: 200px; }
 
+/* Languages actually found in the recording. A code-switched meeting is
+   highlighted so the user reads a foreign-language line as faithful capture
+   rather than a transcription error. */
+.lang-chip {
+  font-size: 12px; padding: 3px 10px; border-radius: 999px; white-space: nowrap;
+  background: var(--panel-alt, #f1f3f5); color: var(--muted); cursor: help;
+}
+.lang-chip.mixed { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
 .searchbox { position: relative; }
 .searchbox input { width: 240px; }
 .search-results {
@@ -330,6 +339,43 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-soft
 .insight-item .jump { color: var(--accent); cursor: pointer; font-size: 11px; }
 .insight-item .jump:hover { text-decoration: underline; }
 .empty-note { color: var(--muted); font-size: 12px; font-style: italic; }
+
+/* ===== Follow-up / carry-forward (zone 5) ===== */
+.followup { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.followup h2 { display: flex; align-items: center; gap: 8px; }
+.followup-count {
+  margin-left: auto; font-size: 11px; font-weight: 500; text-transform: none;
+  letter-spacing: 0; color: var(--muted);
+}
+.followup-label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.followup select { width: 100%; margin-bottom: 10px; }
+
+.followup-list { list-style: none; padding: 0; margin: 10px 0; }
+.followup-item {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 9px 12px; margin-bottom: 7px; font-size: 13px; line-height: 1.5;
+}
+.followup-item-head { display: flex; gap: 8px; align-items: flex-start; }
+.followup-desc { flex: 1; }
+.followup-meta {
+  color: var(--muted); font-size: 11px; margin-top: 4px;
+  display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+}
+.followup-note { font-style: italic; }
+.followup-meta .jump { color: var(--accent); cursor: pointer; }
+.followup-meta .jump:hover { text-decoration: underline; }
+
+/* Verdict pills. 'Not discussed' is deliberately the quietest: it is the
+   system reporting an absence of evidence, not a finding about the work. */
+.cf-pill {
+  font-size: 11px; padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+  font-weight: 600; flex-shrink: 0;
+}
+.cf-completed { background: #e7f4ec; color: var(--ok); }
+.cf-in_progress { background: var(--accent-soft); color: var(--accent); }
+.cf-blocked { background: #fdecea; color: var(--danger); }
+.cf-changed { background: #fff4e5; color: #8a5a00; }
+.cf-not_discussed { background: var(--panel-alt, #f1f3f5); color: var(--muted); }
 
 .speaker-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
 .speaker-row .label { color: var(--muted); font-size: 12px; min-width: 70px; }

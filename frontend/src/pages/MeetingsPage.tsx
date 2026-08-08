@@ -91,6 +91,12 @@ export default function MeetingsPage({ onOpen }: { onOpen: (id: number) => void 
             rename speakers, generate the summary and categories, then download a formatted
             Word document.
           </li>
+          <li>
+            <b>Chain a follow-up meeting.</b> Mark a meeting as the follow-up of an earlier
+            one and the system checks what happened to every action agreed there — done,
+            under way, stuck or never mentioned — then exports the whole series as one
+            document.
+          </li>
         </ol>
             <p className="guide-scope">
               <b>What you can do:</b> edit any line, reassign or rename speakers, search, play the
@@ -140,9 +146,10 @@ export default function MeetingsPage({ onOpen }: { onOpen: (id: number) => void 
             onChange={(e) => setTitle(e.target.value)}
             style={{ flex: 1, minWidth: 180 }}
           />
-          <select value={lang} onChange={(e) => setLang(e.target.value)} aria-label="Output language" title="The single language your transcript, summary and Word document will be in. A mixed-language recording is produced in this one language.">
+          <select value={lang} onChange={(e) => setLang(e.target.value)} aria-label="Output language" title="The single language your summary, insights and Word document will be in. A mixed-language recording is produced in this one language.">
             <option value="en">English</option>
             <option value="zh">Chinese (Mandarin)</option>
+            <option value="ms">Malay (Bahasa Melayu)</option>
             <option value="auto">Auto-detect</option>
           </select>
           <div className="speaker-field">
@@ -164,10 +171,12 @@ export default function MeetingsPage({ onOpen }: { onOpen: (id: number) => void 
             className="mixed-note"
             style={{ flexBasis: "100%", fontSize: 12, color: "#555", lineHeight: 1.5 }}
           >
-            ℹ️ <b>Mixed English + Mandarin?</b> It's detected automatically. The{" "}
-            <b>transcript is shown exactly as spoken</b> (so you can check it against the
-            recording), while the <b>summary, insights and Word document</b> are written in the
-            one language you choose above.
+            ℹ️ <b>Mixed English, Malay and Mandarin?</b> Any combination is detected
+            automatically — you don't have to say which. The{" "}
+            <b>transcript is shown exactly as spoken</b>, switching language line by line (so you
+            can check it against the recording), while the{" "}
+            <b>summary, insights and Word document</b> are written in the one language you choose
+            above.
           </div>
           <button
             disabled={!title.trim() || upload.isPending}

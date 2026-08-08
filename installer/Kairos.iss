@@ -66,14 +66,15 @@ Source: "{#SrcRoot}\frontend\tsconfig.json"; DestDir: "{app}\frontend"; Flags: i
 Source: "{#SrcRoot}\frontend\tsconfig.app.json"; DestDir: "{app}\frontend"; Flags: ignoreversion
 Source: "{#SrcRoot}\frontend\tsconfig.node.json"; DestDir: "{app}\frontend"; Flags: ignoreversion
 Source: "{#SrcRoot}\frontend\eslint.config.js"; DestDir: "{app}\frontend"; Flags: ignoreversion
-; --- scripts, docs, launchers ---
+; --- scripts and launchers ---
+; No documentation is shipped: the project folder holds code and comments only,
+; and every message the user can hit (setup warnings, launcher failures, the
+; missing-token error) states what to do on its own rather than pointing at a
+; file. The written documentation lives with the report.
 Source: "{#SrcRoot}\setup.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SrcRoot}\run.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SrcRoot}\Kairos.bat"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SrcRoot}\README.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SrcRoot}\docs\INSTALL.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "install-deps.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
-Source: "README.md"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "kairos.ico"; DestDir: "{app}\installer"; Flags: ignoreversion
 
 [Icons]
@@ -92,7 +93,8 @@ Filename: "https://huggingface.co/pyannote/speaker-diarization-community-1"; Fla
 
 [UninstallDelete]
 ; created after install time, so the uninstaller must be told about them.
-; NOTE: this removes processed meetings too - documented in installer\README.md.
+; NOTE: this removes processed meetings too - the wizard's information page
+; (BEFORE-YOU-INSTALL.txt) warns the user about that before anything is written.
 Type: filesandordirs; Name: "{app}\backend\.venv"
 Type: filesandordirs; Name: "{app}\backend\data"
 Type: filesandordirs; Name: "{app}\backend\.env"

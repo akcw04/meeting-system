@@ -19,7 +19,8 @@ const FIELD_LABELS: Record<string, string> = {
   title: "Meeting Title", date: "Date", duration: "Duration", language: "Language",
   participants: "Participants", attendees: "Attendees", summary: "Summary",
   action_items: "Action Items", decisions: "Key Decisions", deadlines: "Deadlines",
-  issues: "Technical Issues", risks: "Risks", transcript: "Full Transcript",
+  issues: "Technical Issues", risks: "Risks", carry_forward: "Matters Arising",
+  transcript: "Full Transcript",
 };
 // The core sections users almost always want filled — flag any that AREN'T
 // recognised (the usual cause is a misspelt heading, e.g. "Riks" → "Risks").
@@ -82,7 +83,8 @@ export default function TemplatesPage() {
                 <div className="how-ex-arrow">→ we fill the cell beside it: 17 June 2026</div>
               </div>
             </div>
-            Both work in <b>English or Chinese</b> (e.g. <code>决策</code> or <code>日期</code>).
+            Both work in <b>English, Malay or Chinese</b> (e.g. <code>Keputusan</code>,{" "}
+            <code>Tarikh</code>, <code>决策</code> or <code>日期</code>).
           </li>
           <li>
             <b>Upload it here, then export.</b> Give it a name and upload (we check it has at least
@@ -93,7 +95,9 @@ export default function TemplatesPage() {
         <p className="guide-scope">
           <b>Names we recognise</b> (as a heading <i>or</i> a table label, any language): Meeting Title ·
           Date · Duration · Language · Attendees · Summary · Key Decisions · Action Items · Deadlines ·
-          Technical Issues · Risks · Transcript. Anything else is left exactly as you wrote it.
+          Technical Issues · Risks · Matters Arising · Transcript. Anything else is left exactly as
+          you wrote it. <b>Matters Arising</b> (also “Perkara Berbangkit”, “Progress Since Last
+          Meeting”) fills only when the meeting is linked as a follow-up of an earlier one.
         </p>
           </>
         )}

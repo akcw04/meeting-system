@@ -33,6 +33,11 @@ dist/
 *.log
 .npm/
 
+# Server output captured by run.ps1 (the servers run hidden, so their console
+# output goes here instead of a visible window - useful for troubleshooting,
+# but machine-local and never committed).
+logs/
+
 # Misc
 *.tmp
 *.bak

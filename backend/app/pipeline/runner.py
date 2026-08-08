@@ -34,7 +34,12 @@ from app.pipeline.diarize import (
     diarize,
     merge_phantom_speakers,
 )
-from app.pipeline.transcribe import detect_languages, transcribe, transcribe_codeswitch
+from app.pipeline.transcribe import (
+    SUPPORTED_LANGUAGES,
+    detect_languages,
+    transcribe,
+    transcribe_codeswitch,
+)
 
 # Only one meeting may occupy the GPU pipeline at a time. FastAPI background
 # tasks run in a threadpool; this RLock serializes them so concurrent uploads
@@ -111,8 +116,9 @@ def run_pipeline(meeting_id: int, original_path: Path) -> None:
         primary = (row["primary_language"] if row else "auto") or "auto"
 
         # Detect the spoken languages up front so we can spot code-switched
-        # (English + Mandarin) recordings - the IR headline case. Cheap: only a
-        # few short windows are sampled, not the whole file.
+        # recordings - English, Mandarin and Bahasa Melayu in any combination,
+        # the Malaysian meeting case. Cheap: only a few short windows are
+        # sampled, not the whole file.
         detected = detect_languages(audio_wav)
         langs_present = sorted(set(detected))
         dominant = max(langs_present, key=detected.count) if detected else "en"
@@ -121,10 +127,10 @@ def run_pipeline(meeting_id: int, original_path: Path) -> None:
         # The user's preferred language for the OUTPUT (summary, insights, Word
         # doc); 'auto' falls back to the dominant detected language. The
         # TRANSCRIPT itself is always kept as-spoken (see below).
-        preferred = primary if primary in ("en", "zh") else dominant
+        preferred = primary if primary in SUPPORTED_LANGUAGES else dominant
 
         # Record detected languages: drives the UI "mixed languages" notice and
-        # the Part-2 report. Stored as e.g. "en,zh".
+        # the Part-2 report. Stored as e.g. "en,ms" or "en,ms,zh".
         with get_conn() as conn:
             conn.execute(
                 "UPDATE meetings SET languages_detected = ? WHERE id = ?",
