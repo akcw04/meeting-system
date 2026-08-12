@@ -233,7 +233,8 @@ def get_insights(meeting_id: int) -> InsightsResponse:
     """
     with get_conn() as conn:
         meeting = conn.execute(
-            "SELECT id, status, summary FROM meetings WHERE id = ?",
+            "SELECT id, status, summary, primary_language, language "
+            "FROM meetings WHERE id = ?",
             (meeting_id,),
         ).fetchone()
         if meeting is None:
@@ -252,18 +253,28 @@ def get_insights(meeting_id: int) -> InsightsResponse:
         # never removes anything - just a "verify this" hint). See citation.py.
         cited = {it.source_segment_id for grp in items.values() for it in grp if it.source_segment_id}
         seg_text: dict[int, str] = {}
+        seg_lang: dict[int, str | None] = {}
         if cited:
             qs = ",".join("?" * len(cited))
-            seg_text = {
-                r["id"]: r["text"]
-                for r in conn.execute(
-                    f"SELECT id, text FROM segments WHERE id IN ({qs})", tuple(cited)
-                )
-            }
+            for r in conn.execute(
+                f"SELECT id, text, language FROM segments WHERE id IN ({qs})", tuple(cited)
+            ):
+                seg_text[r["id"]] = r["text"]
+                seg_lang[r["id"]] = r["language"]
+        # The insights are written in the meeting's output language, while each
+        # cited line stays in the language it was spoken. Both are passed so a
+        # cross-language citation is not mistaken for an unsupported one.
+        primary = (meeting["primary_language"] or "auto").lower()
+        out_lang = primary if primary != "auto" else (meeting["language"] or None)
         for grp in items.values():
             for it in grp:
                 if it.source_segment_id is not None:
-                    it.low_support = is_low_support(it.description, seg_text.get(it.source_segment_id))
+                    it.low_support = is_low_support(
+                        it.description,
+                        seg_text.get(it.source_segment_id),
+                        out_lang,
+                        seg_lang.get(it.source_segment_id),
+                    )
 
         return InsightsResponse(
             meeting_id=meeting_id,

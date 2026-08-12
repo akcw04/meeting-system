@@ -15,6 +15,7 @@ than the fixed EN/ZH pair it started as.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import soundfile as sf
@@ -40,6 +41,34 @@ def canonical_language(lang: str | None) -> str:
     """Fold a Whisper-reported code onto the language the system works in."""
     code = (lang or "").lower().strip()
     return _LANGUAGE_ALIASES.get(code, code)
+
+
+_HAS_CJK = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
+
+
+def languages_in_segments(segments: list[dict]) -> list[str]:
+    """Which languages the produced transcript ACTUALLY contains.
+
+    Preferred over `detect_languages()` for recording what a meeting turned out
+    to be. That function samples 25-second windows and asks Whisper for ONE
+    language per window, which cannot surface a language that only appears in
+    short bursts: a four-second Mandarin sentence inside a window dominated by
+    English is simply outvoted. On a real three-language test recording that
+    under-reported a genuinely trilingual meeting as bilingual, even though the
+    code-switch pass had transcribed the Mandarin correctly.
+
+    Reading the finished segments instead gives exactly the right granularity.
+    Chinese characters in the text also count on their own: a per-segment
+    language LABEL can be wrong, but the script it was written in cannot be.
+    """
+    found: set[str] = set()
+    for seg in segments:
+        lang = canonical_language(seg.get("language"))
+        if lang:
+            found.add(lang)
+        if _HAS_CJK.search(seg.get("text") or ""):
+            found.add("zh")
+    return sorted(found)
 
 
 _whisper_model: WhisperModel | None = None

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date, timedelta
 
 import httpx
 
@@ -434,6 +435,180 @@ def _extract_date_cues(text: str) -> list[str]:
     return [m.strip() for m in _DATE_RE.findall(text or "")]
 
 
+# === Turning a spoken date cue into an actual calendar date ================
+#
+# A deadline that reads "by Friday" is only meaningful if the reader knows which
+# Friday. Each cue is therefore resolved against the meeting's own date and the
+# result appended in parentheses - "by Friday (15/08/2026)" - rather than
+# replacing the words that were actually spoken, so the user can still see what
+# the transcript said and correct the interpretation if it is wrong.
+#
+# The anchor is the date the recording was uploaded. That is right when a
+# meeting is uploaded the day it happens, and wrong by exactly the delay when it
+# is not, which is why the resolved date is offered as an editable suggestion
+# rather than presented as fact.
+
+_WEEKDAY_INDEX = {
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4,
+    "saturday": 5, "sunday": 6,
+    "isnin": 0, "selasa": 1, "rabu": 2, "khamis": 3, "jumaat": 4,
+    "sabtu": 5, "ahad": 6,
+    "一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6,
+}
+
+_MONTH_INDEX = {
+    "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
+    "april": 4, "apr": 4, "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
+    "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9,
+    "october": 10, "oct": 10, "november": 11, "nov": 11, "december": 12, "dec": 12,
+    "januari": 1, "februari": 2, "mac": 3, "mei": 5, "julai": 7, "ogos": 8,
+    "oktober": 10, "disember": 12,
+}
+
+_NUMBER_WORDS = {
+    "a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    "satu": 1, "dua": 2, "tiga": 3, "empat": 4, "lima": 5, "enam": 6,
+    "tujuh": 7, "lapan": 8, "sembilan": 9, "sepuluh": 10,
+    "一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5,
+}
+
+
+def _end_of_month(d: date) -> date:
+    first_next = date(d.year + (d.month == 12), (d.month % 12) + 1, 1)
+    return first_next - timedelta(days=1)
+
+
+def _next_weekday(anchor: date, target: int) -> date:
+    """The soonest `target` weekday on or after `anchor`.
+
+    'by Friday' said on a Friday means that day, not a week later, so the
+    anchor's own weekday counts as a match.
+    """
+    return anchor + timedelta(days=(target - anchor.weekday()) % 7)
+
+
+def resolve_date_cue(cue: str, anchor: date) -> date | None:
+    """Best-effort calendar date for a spoken cue. None when it cannot be read.
+
+    Vague horizons ('this quarter', 'soon') deliberately return None - inventing
+    a precise date for them would be a guess dressed as data.
+    """
+    if not cue or anchor is None:
+        return None
+    c = " ".join(cue.lower().split())
+
+    # --- explicit calendar dates ------------------------------------------
+    m = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", c)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
+    m = re.search(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b", c)
+    if m:
+        day, month = int(m.group(1)), int(m.group(2))
+        year = int(m.group(3)) if m.group(3) else anchor.year
+        if year < 100:
+            year += 2000
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
+    m = re.search(r"(\d{1,2})\s*月\s*(\d{1,2})\s*[号日]", c)
+    if m:
+        try:
+            return date(anchor.year, int(m.group(1)), int(m.group(2)))
+        except ValueError:
+            return None
+    names = "|".join(sorted(_MONTH_INDEX, key=len, reverse=True))
+    m = (re.search(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?({names})\b", c)
+         or re.search(rf"\b({names})\s+(\d{{1,2}})(?:st|nd|rd|th)?\b", c))
+    if m:
+        a, b = m.group(1), m.group(2)
+        day, mon = (int(a), _MONTH_INDEX[b]) if a.isdigit() else (int(b), _MONTH_INDEX[a])
+        try:
+            resolved = date(anchor.year, mon, day)
+        except ValueError:
+            return None
+        # A month already past almost certainly means next year.
+        if resolved < anchor - timedelta(days=180):
+            try:
+                resolved = date(anchor.year + 1, mon, day)
+            except ValueError:
+                return None
+        return resolved
+
+    # --- relative horizons -------------------------------------------------
+    if re.search(r"\b(today|tonight)\b|hari ini|malam ini|今天|今晚", c):
+        return anchor
+    if re.search(r"\btomorrow\b|\besok\b|\bbesok\b|明天|明晚", c):
+        return anchor + timedelta(days=1)
+    if re.search(r"day after tomorrow|\blusa\b|后天", c):
+        return anchor + timedelta(days=2)
+    if re.search(r"next week|minggu depan|minggu hadapan|下个?周|下个?星期", c):
+        return anchor + timedelta(days=7)
+    if re.search(r"end of (?:the )?month|hujung bulan|月底", c):
+        return _end_of_month(anchor)
+    if re.search(r"next month|bulan depan|bulan hadapan|下个?月", c):
+        return _end_of_month(_end_of_month(anchor) + timedelta(days=1))
+    if re.search(r"end of (?:the )?week|hujung minggu|周末|this week|minggu ini|本周", c):
+        return _next_weekday(anchor, 6)          # the coming Sunday
+    if re.search(r"this month|bulan ini|这个?月", c):
+        return _end_of_month(anchor)
+
+    m = re.search(r"\b(?:within|in|dalam)\s+([a-z一-鿿]+|\d+)\s+"
+                  r"(day|days|week|weeks|month|months|hari|minggu|bulan|天|周|个月)\b", c)
+    if not m:
+        m = re.search(r"\b([a-z一-鿿]+|\d+)\s+"
+                      r"(day|days|week|weeks|month|months|hari|minggu|bulan|天|周|个月)\b", c)
+    if m:
+        raw, unit = m.group(1), m.group(2)
+        n = int(raw) if raw.isdigit() else _NUMBER_WORDS.get(raw)
+        if n:
+            if unit.startswith(("day", "hari")) or unit == "天":
+                return anchor + timedelta(days=n)
+            if unit.startswith(("week", "minggu")) or unit == "周":
+                return anchor + timedelta(weeks=n)
+            d = anchor
+            for _ in range(n):
+                d = _end_of_month(d) + timedelta(days=1)
+            return d - timedelta(days=1)
+
+    # --- weekday names ------------------------------------------------------
+    m = re.search(r"(?:星期|周|礼拜)\s*([一二三四五六日天])", c)
+    if m:
+        return _next_weekday(anchor, _WEEKDAY_INDEX[m.group(1)])
+    latin = "|".join(k for k in _WEEKDAY_INDEX if k.isalpha() and k.isascii())
+    m = re.search(rf"\b({latin})\b", c)
+    if m:
+        target = _WEEKDAY_INDEX[m.group(1)]
+        base = anchor + timedelta(days=7) if "next" in c else anchor
+        return _next_weekday(base, target)
+    return None
+
+
+def annotate_deadline_dates(deadlines: list, anchor: date | None) -> list:
+    """Append a resolved calendar date to each deadline's date text.
+
+    'by Friday' becomes 'by Friday (15/08/2026)'. A cue that cannot be resolved,
+    or one already carrying a date, is left exactly as it is. Several cues joined
+    with commas are resolved individually.
+    """
+    if anchor is None:
+        return deadlines
+    for item in deadlines:
+        raw = (getattr(item, "date", None) or "").strip()
+        if not raw or "(" in raw:
+            continue
+        parts = []
+        for cue in [p.strip() for p in raw.split(",") if p.strip()]:
+            resolved = resolve_date_cue(cue, anchor)
+            parts.append(f"{cue} ({resolved:%d/%m/%Y})" if resolved else cue)
+        item.date = ", ".join(parts)
+    return deadlines
+
+
 def _augment_deadlines(deadlines: list, action_items: list) -> list:
     """Build the Deadlines section deterministically from dated action items.
 
@@ -606,6 +781,7 @@ def categorize_transcript(
     output_language: str | None,
     progress=print,
     on_progress=None,
+    meeting_date: date | None = None,
 ) -> MeetingInsights:
     """Run the full map-reduce extraction over a diarized transcript.
 
@@ -676,7 +852,9 @@ def categorize_transcript(
             summary=_ensure_summary(only.chunk_summary, [only], only.action_items, only.decisions),
             action_items=only.action_items,
             decisions=only.decisions,
-            deadlines=_augment_deadlines(only.deadlines, only.action_items),
+            deadlines=annotate_deadline_dates(
+                _augment_deadlines(only.deadlines, only.action_items), meeting_date
+            ),
             issues=issues,
             risks=risks,
         )
@@ -725,6 +903,7 @@ def categorize_transcript(
                                        language, risks, issues, progress)
         risks, issues = risks + nr, issues + ni
     deadlines = _augment_deadlines(deadlines, action_items)  # derive from dated actions (bug #21)
+    deadlines = annotate_deadline_dates(deadlines, meeting_date)  # 'by Friday (15/08/2026)'
 
     progress(
         f"[categorize] merged -> {len(action_items)} actions, {len(decisions)} decisions, "

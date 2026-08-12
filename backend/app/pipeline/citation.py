@@ -9,8 +9,15 @@ Deliberately CONSERVATIVE to avoid false-positive noise: when the item and the
 cited text are in different scripts (an English item citing a Chinese segment -
 common in code-switch meetings) we cannot compare words, so we do NOT flag.
 Better a missed flag than a noisy one. So this verifies SAME-language citations
-(the common case + pure-EN/ZH meetings); cross-language ones are left unflagged
-(a documented limitation).
+(the common case, and every monolingual meeting whatever its language), and
+leaves cross-language ones unflagged (a documented limitation).
+
+Detecting "different language" by SCRIPT alone is not enough. It works for
+English against Mandarin, which cannot be compared word for word, but English
+and Malay share the Latin alphabet: their words are extracted and compared quite
+happily and simply never coincide, so a correct English summary of a Malay line
+was being flagged as unsupported. Callers therefore pass the two languages when
+they know them, and a mismatch skips the comparison outright.
 """
 from __future__ import annotations
 
@@ -40,11 +47,26 @@ def _signals(text: str) -> tuple[set[str], set[str], set[str]]:
     return nums, words, cjk
 
 
-def is_low_support(description: str, segment_text: str | None) -> bool:
+def is_low_support(
+    description: str,
+    segment_text: str | None,
+    description_language: str | None = None,
+    segment_language: str | None = None,
+) -> bool:
     """True iff the cited segment shares NO number / content word / CJK char with
-    the item description AND a same-script comparison was actually possible."""
+    the item description AND a like-for-like comparison was actually possible.
+
+    `description_language` is the meeting's output language and
+    `segment_language` the language that line was spoken in. When both are known
+    and differ, no comparison is attempted: the words of a correct English
+    summary of a Malay line do not overlap it, and flagging that would punish the
+    system for translating rather than for citing wrongly.
+    """
     if not description or not segment_text:
         return False
+    if description_language and segment_language:
+        if description_language.strip().lower() != segment_language.strip().lower():
+            return False
     d_num, d_word, d_cjk = _signals(description)
     s_num, s_word, s_cjk = _signals(segment_text)
     if (d_num & s_num) or (d_word & s_word) or (d_cjk & s_cjk):

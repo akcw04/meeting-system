@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 from app.config import settings
@@ -37,6 +38,7 @@ from app.pipeline.diarize import (
 from app.pipeline.transcribe import (
     SUPPORTED_LANGUAGES,
     detect_languages,
+    languages_in_segments,
     transcribe,
     transcribe_codeswitch,
 )
@@ -129,14 +131,6 @@ def run_pipeline(meeting_id: int, original_path: Path) -> None:
         # TRANSCRIPT itself is always kept as-spoken (see below).
         preferred = primary if primary in SUPPORTED_LANGUAGES else dominant
 
-        # Record detected languages: drives the UI "mixed languages" notice and
-        # the Part-2 report. Stored as e.g. "en,ms" or "en,ms,zh".
-        with get_conn() as conn:
-            conn.execute(
-                "UPDATE meetings SET languages_detected = ? WHERE id = ?",
-                (",".join(langs_present), meeting_id),
-            )
-
         _set_status(meeting_id, "transcribing")
         _set_progress(meeting_id, 0.0)
         # Transcript policy (✋ DECISIONS 2026-06-21): show the ORIGINAL as-spoken
@@ -157,6 +151,19 @@ def run_pipeline(meeting_id: int, original_path: Path) -> None:
                 language=preferred,
                 task="transcribe",
                 progress_callback=_throttled_progress(meeting_id, duration),
+            )
+
+        # Record the languages the transcript ACTUALLY turned out to contain.
+        # Written here, after transcription, rather than from the pre-scan above:
+        # the pre-scan judges one language per 25-second window, so a language
+        # spoken only in short bursts is outvoted and never recorded. That
+        # under-reported a real trilingual test recording as bilingual even
+        # though its Mandarin had been transcribed correctly. Drives the UI's
+        # mixed-language notice. Stored as e.g. "en,ms" or "en,ms,zh".
+        with get_conn() as conn:
+            conn.execute(
+                "UPDATE meetings SET languages_detected = ? WHERE id = ?",
+                (",".join(languages_in_segments(segments)), meeting_id),
             )
 
         # === Stage D: word-level alignment (WhisperX) ===
@@ -328,7 +335,7 @@ def run_categorization(meeting_id: int) -> None:
 
     with get_conn() as conn:
         meeting = conn.execute(
-            "SELECT primary_language, language FROM meetings WHERE id = ?",
+            "SELECT primary_language, language, created_at FROM meetings WHERE id = ?",
             (meeting_id,),
         ).fetchone()
         if meeting is None:
@@ -357,11 +364,25 @@ def run_categorization(meeting_id: int) -> None:
 
     _set_status(meeting_id, "categorizing")
     _set_progress(meeting_id, 0.0)
+    # Anchor for turning spoken date cues into calendar dates ("by Friday" ->
+    # "by Friday (15/08/2026)"). The upload timestamp stands in for the meeting
+    # date, which is exact when a recording is uploaded the day it was made and
+    # wrong by the delay when it is not - hence the resolved date is shown as an
+    # editable suggestion beside the words actually spoken, never in place of them.
+    meeting_date = None
+    raw_created = meeting["created_at"] if "created_at" in meeting.keys() else None
+    if raw_created:
+        try:
+            meeting_date = datetime.fromisoformat(str(raw_created).replace("Z", "")).date()
+        except ValueError:
+            meeting_date = None
+
     insights = categorize_transcript(
         segments,
         speaker_labels,
         out_lang,
         on_progress=lambda f: _set_progress(meeting_id, f),
+        meeting_date=meeting_date,
     )
 
     def first_or_none(ids: list[int]) -> int | None:

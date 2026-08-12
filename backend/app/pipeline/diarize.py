@@ -218,12 +218,23 @@ def assign_speakers_to_segments(
     diarization: list[dict],
     min_overlap_ratio: float = 0.3,
 ) -> list[dict]:
-    """For each transcript segment, pick the diarization turn that overlaps
-    most with it in time. Attach the speaker label to the segment.
+    """For each transcript segment, attach the speaker who talks most in it.
 
-    If overlap is below `min_overlap_ratio` of the segment duration (background
-    noise, music, silence), the segment's speaker stays None and the UI shows
-    it as 'unknown'.
+    Overlap is accumulated PER SPEAKER across all of that speaker's turns, and
+    the segment goes to whoever holds the most of it. `min_overlap_ratio` then
+    judges whether the segment is mostly speech at all - if the diarizer found
+    little speech across the whole span (background noise, music, silence), the
+    speaker stays None and the UI shows it as 'unknown'.
+
+    Deliberately NOT "the single turn with the largest overlap" (the original
+    rule). That compared ONE turn against the whole segment length, so a long
+    segment demanded one improbably long unbroken turn to clear the threshold:
+    a 28-second segment needed an 8.4-second turn, while real conversational
+    turns here averaged under two seconds. Every long segment therefore failed
+    the test and silently lost its speaker. On a real test recording that left
+    7 of 9 segments labelled 'unknown' even though the diarizer had covered
+    them with 108 turns of speech. Whisper produces long segments whenever
+    people talk without pausing, so this was not an edge case.
     """
     enriched: list[dict] = []
     for seg in segments:
@@ -231,18 +242,20 @@ def assign_speakers_to_segments(
         s_end = seg["end_seconds"]
         s_dur = max(0.001, s_end - s_start)
 
-        best_speaker: str | None = None
-        best_overlap = 0.0
+        per_speaker: dict[str, float] = {}
         for turn in diarization:
             overlap_start = max(s_start, turn["start_seconds"])
             overlap_end = min(s_end, turn["end_seconds"])
-            overlap = max(0.0, overlap_end - overlap_start)
-            if overlap > best_overlap:
-                best_overlap = overlap
-                best_speaker = turn["speaker"]
+            overlap = overlap_end - overlap_start
+            if overlap > 0:
+                per_speaker[turn["speaker"]] = per_speaker.get(turn["speaker"], 0.0) + overlap
 
-        if best_speaker is not None and (best_overlap / s_dur) < min_overlap_ratio:
-            best_speaker = None
+        speaker: str | None = None
+        if per_speaker:
+            speech = sum(per_speaker.values())
+            # Is this segment mostly speech? (the original intent of the guard)
+            if speech / s_dur >= min_overlap_ratio:
+                speaker = max(per_speaker.items(), key=lambda kv: kv[1])[0]
 
-        enriched.append({**seg, "speaker": best_speaker})
+        enriched.append({**seg, "speaker": speaker})
     return enriched
