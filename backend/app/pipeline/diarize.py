@@ -259,3 +259,117 @@ def assign_speakers_to_segments(
 
         enriched.append({**seg, "speaker": speaker})
     return enriched
+
+
+def _word_speaker(word: dict, diarization: list[dict]) -> str | None:
+    """The speaker with the most diarization overlap over a single word's span.
+
+    None when no turn overlaps the word at all (a word sitting in silence, e.g.
+    a trailing breath the aligner kept) - the caller fills those from context.
+    """
+    ws, we = word["start_seconds"], word["end_seconds"]
+    per: dict[str, float] = {}
+    for turn in diarization:
+        overlap = min(we, turn["end_seconds"]) - max(ws, turn["start_seconds"])
+        if overlap > 0:
+            per[turn["speaker"]] = per.get(turn["speaker"], 0.0) + overlap
+    if not per:
+        return None
+    return max(per.items(), key=lambda kv: kv[1])[0]
+
+
+def split_segments_by_speaker(
+    segments: list[dict],
+    diarization: list[dict],
+    min_overlap_ratio: float = 0.3,
+) -> list[dict]:
+    """Attribute a speaker to every WORD and split each segment at speaker
+    changes, so one coarse Whisper segment spanning several turns becomes one
+    sub-segment per speaker instead of collapsing two voices under one label.
+
+    Whisper groups continuous speech into blocks up to its 30-second window, so a
+    single segment routinely covers a whole exchange (measured: a re-recorded
+    two-person meeting produced ten segments averaging 26 s, each holding both
+    speakers). `assign_speakers_to_segments` then stamps the WHOLE block with its
+    majority speaker and the minority voice disappears. Splitting on the
+    word-level diarization fixes that at the only granularity fine enough to carry
+    a turn change - individual words, whose timings WhisperX already provides.
+
+    Contract mirrors `assign_speakers_to_segments`: returns segments each with a
+    `speaker` label (or None = unknown), ready to persist, and preserves each
+    piece's `words`. A segment is returned UNCHANGED when it holds one speaker, so
+    the original text/punctuation is kept wherever no split is needed; only a
+    genuinely split segment has its text rebuilt from its words.
+
+    Graceful degradation: a segment with no word timings (a language WhisperX
+    cannot align, so `words` is empty) falls back to the whole-segment rule, and
+    the same low-speech noise guard leaves near-silent segments unknown.
+    """
+    out: list[dict] = []
+    for seg in segments:
+        words = seg.get("words") or []
+        if not words:
+            out.extend(assign_speakers_to_segments([seg], diarization, min_overlap_ratio))
+            continue
+
+        # Noise guard: if the diarizer found little speech across the whole span,
+        # leave it unknown and unsplit rather than carving up non-speech.
+        s_start, s_end = seg["start_seconds"], seg["end_seconds"]
+        s_dur = max(0.001, s_end - s_start)
+        speech = 0.0
+        for turn in diarization:
+            overlap = min(s_end, turn["end_seconds"]) - max(s_start, turn["start_seconds"])
+            if overlap > 0:
+                speech += overlap
+        if speech / s_dur < min_overlap_ratio:
+            out.append({**seg, "speaker": None})
+            continue
+
+        labelled = [[w, _word_speaker(w, diarization)] for w in words]
+        # Fill words that fell in silence from their neighbours: forward first
+        # (inherit the speaker still talking), then back-fill any leading gap.
+        last: str | None = None
+        for pair in labelled:
+            if pair[1] is None:
+                pair[1] = last
+            else:
+                last = pair[1]
+        nxt: str | None = None
+        for pair in reversed(labelled):
+            if pair[1] is None:
+                pair[1] = nxt
+            else:
+                nxt = pair[1]
+
+        distinct = {p[1] for p in labelled}
+        if len(distinct) <= 1:
+            # One speaker across the segment - keep it verbatim (no rebuild).
+            out.append({**seg, "speaker": next(iter(distinct)) if distinct else None})
+            continue
+
+        # Multiple speakers - split into consecutive same-speaker runs.
+        no_space = (seg.get("language") == "zh")
+        runs: list[dict] = []
+        for word, spk in labelled:
+            if runs and runs[-1]["speaker"] == spk:
+                runs[-1]["words"].append(word)
+            else:
+                runs.append({"speaker": spk, "words": [word]})
+        for run in runs:
+            rw = run["words"]
+            text = (
+                "".join(w["text"] for w in rw)
+                if no_space
+                else " ".join(w["text"].strip() for w in rw)
+            ).strip()
+            out.append(
+                {
+                    "start_seconds": rw[0]["start_seconds"],
+                    "end_seconds": rw[-1]["end_seconds"],
+                    "text": text,
+                    "language": seg.get("language"),
+                    "speaker": run["speaker"],
+                    "words": rw,
+                }
+            )
+    return out

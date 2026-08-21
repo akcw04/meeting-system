@@ -136,6 +136,10 @@ export async function getMeeting(id: number): Promise<Meeting> {
   return (await check(await fetch(`${API}/meetings/${id}`))).json();
 }
 
+export async function deleteMeeting(id: number): Promise<void> {
+  await check(await fetch(`${API}/meetings/${id}`, { method: "DELETE" }));
+}
+
 export async function uploadMeeting(opts: {
   title: string;
   file: File;

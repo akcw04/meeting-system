@@ -12,6 +12,7 @@ GET   /meetings/{id}/export/combined-> minutes for the whole follow-up chain
 """
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import get_args
 
@@ -156,6 +157,60 @@ def get_meeting(meeting_id: int) -> MeetingResponse:
     if row is None:
         raise HTTPException(404, f"Meeting {meeting_id} not found")
     return MeetingResponse.model_validate(dict(row))
+
+
+@router.delete("/{meeting_id}", status_code=204)
+def delete_meeting(meeting_id: int) -> None:
+    """Delete a meeting and everything that belongs to it.
+
+    Removes the transcript (segments and their words), the speakers, all five
+    insight tables, the carry-forward analysis, and the meeting's audio and
+    export files. It also keeps the rest of the database consistent: any meeting
+    that was linked as a follow-up OF this one is detached (its follow_up_of and
+    carry-forward status cleared) and its now-meaningless carry-forward rows are
+    dropped, so no follower is left pointing at a meeting that no longer exists.
+
+    Deletes are explicit and ordered rather than relying on ON DELETE CASCADE: on
+    databases migrated from an earlier schema the follow-up columns were added
+    without their foreign-key clauses, and the insight tables reference segments
+    with no delete action, so a plain "DELETE FROM meetings" could either fail or
+    leave orphans behind.
+    """
+    with get_conn() as conn:
+        if conn.execute(
+            "SELECT id FROM meetings WHERE id = ?", (meeting_id,)
+        ).fetchone() is None:
+            raise HTTPException(404, f"Meeting {meeting_id} not found")
+
+        # 1. Detach any meeting that follows THIS one, dropping its stale analysis.
+        conn.execute(
+            "DELETE FROM carry_forward WHERE previous_meeting_id = ?", (meeting_id,)
+        )
+        conn.execute(
+            "UPDATE meetings SET follow_up_of = NULL, carry_forward_status = NULL, "
+            "updated_at = CURRENT_TIMESTAMP WHERE follow_up_of = ?",
+            (meeting_id,),
+        )
+
+        # 2. This meeting's own children, deepest first so nothing dangles when
+        #    foreign_keys is ON (insights reference segments; segments reference
+        #    speakers; words reference segments).
+        conn.execute(
+            "DELETE FROM words WHERE segment_id IN "
+            "(SELECT id FROM segments WHERE meeting_id = ?)",
+            (meeting_id,),
+        )
+        for table in (
+            "action_items", "decisions", "deadlines", "issues", "risks", "carry_forward"
+        ):
+            conn.execute(f"DELETE FROM {table} WHERE meeting_id = ?", (meeting_id,))
+        conn.execute("DELETE FROM segments WHERE meeting_id = ?", (meeting_id,))
+        conn.execute("DELETE FROM speakers WHERE meeting_id = ?", (meeting_id,))
+        conn.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
+
+    # 3. Files on disk - best-effort, outside the DB transaction.
+    for base in (settings.upload_dir, settings.output_dir):
+        shutil.rmtree(base / str(meeting_id), ignore_errors=True)
 
 
 @router.get("", response_model=list[MeetingResponse])

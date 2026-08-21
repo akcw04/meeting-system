@@ -31,9 +31,9 @@ from app.pipeline.align import align_segments
 from app.pipeline.audio import extract_audio_to_wav
 from app.pipeline.categorize import categorize_transcript
 from app.pipeline.diarize import (
-    assign_speakers_to_segments,
     diarize,
     merge_phantom_speakers,
+    split_segments_by_speaker,
 )
 from app.pipeline.transcribe import (
     SUPPORTED_LANGUAGES,
@@ -196,7 +196,10 @@ def run_pipeline(meeting_id: int, original_path: Path) -> None:
                     f"[diarize] phantom-merge: {before} -> {after} speakers "
                     f"(< {settings.phantom_max_seconds}s talk-time)"
                 )
-        final_segments = assign_speakers_to_segments(aligned_segments, turns)
+        # Split each segment at speaker changes using the word-level diarization,
+        # so a coarse Whisper block spanning several turns no longer collapses two
+        # voices under one label (see split_segments_by_speaker).
+        final_segments = split_segments_by_speaker(aligned_segments, turns)
 
         # === Persist speakers, segments, words ===
         with get_conn() as conn:

@@ -1,12 +1,14 @@
 import { useCallback, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  deleteMeeting,
   fmtTime,
   listMeetings,
   statusInfo,
   uploadMeeting,
   type Meeting,
 } from "../api/client";
+import ConfirmDialog from "../components/ConfirmDialog";
 import ProgressBar from "../components/ProgressBar";
 import Stepper from "../components/Stepper";
 import { useCollapse } from "../components/useCollapse";
@@ -40,6 +42,16 @@ export default function MeetingsPage({ onOpen }: { onOpen: (id: number) => void 
       setFile(null);
       setTitle("");
       setSpeakers("");
+      qc.invalidateQueries({ queryKey: ["meetings"] });
+    },
+  });
+
+  // Delete a meeting from the dashboard, guarded by an in-app confirmation.
+  const [confirmDelete, setConfirmDelete] = useState<Meeting | null>(null);
+  const del = useMutation({
+    mutationFn: deleteMeeting,
+    onSuccess: () => {
+      setConfirmDelete(null);
       qc.invalidateQueries({ queryKey: ["meetings"] });
     },
   });
@@ -218,12 +230,25 @@ export default function MeetingsPage({ onOpen }: { onOpen: (id: number) => void 
                     {` · uploaded ${m.created_at.slice(0, 16).replace("T", " ")}`}
                   </div>
                 </div>
-                <span
-                  className={`status-pill ${st.failed ? "failed" : ""} ${m.status === "ready" ? "ready" : ""}`}
-                  title={m.status}
-                >
-                  {st.label}
-                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span
+                    className={`status-pill ${st.failed ? "failed" : ""} ${m.status === "ready" ? "ready" : ""}`}
+                    title={m.status}
+                  >
+                    {st.label}
+                  </span>
+                  <button
+                    className="ghost small"
+                    title="Delete this meeting"
+                    aria-label={`Delete meeting: ${m.title}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setConfirmDelete(m);
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
               <ProgressBar meeting={m} />
             </div>
@@ -233,6 +258,20 @@ export default function MeetingsPage({ onOpen }: { onOpen: (id: number) => void 
           <div className="center-note">No meetings yet - upload your first recording above.</div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        title="Delete meeting?"
+        message={
+          confirmDelete
+            ? `"${confirmDelete.title}" and its transcript, insights and files will be permanently deleted. This cannot be undone.` +
+              (del.isError ? ` (Previous attempt failed: ${(del.error as Error).message})` : "")
+            : ""
+        }
+        confirmLabel={del.isPending ? "Deleting…" : "Delete"}
+        onConfirm={() => confirmDelete && del.mutate(confirmDelete.id)}
+        onCancel={() => setConfirmDelete(null)}
+      />
     </div>
   );
 }
