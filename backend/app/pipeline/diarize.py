@@ -278,6 +278,60 @@ def _word_speaker(word: dict, diarization: list[dict]) -> str | None:
     return max(per.items(), key=lambda kv: kv[1])[0]
 
 
+# A run of at most this many words AND shorter than this many seconds is treated
+# as diarization noise at a turn boundary - a stray word or two the diarizer
+# flipped to another speaker mid-utterance - and is absorbed into an adjacent run
+# rather than left as a sub-second fragment. Genuine conversational turns run
+# longer than this.
+_SMOOTH_MAX_WORDS = 2
+_SMOOTH_MAX_SECONDS = 0.8
+
+
+def _smooth_speaker_runs(runs: list[dict]) -> list[dict]:
+    """Absorb tiny speaker runs into a neighbour, then coalesce same-speaker runs.
+
+    Word-level diarization occasionally flips a stray word to another speaker
+    where two turns meet (or where pyannote briefly over-detects a third
+    speaker), shattering one clean turn into sub-second fragments. Each tiny run
+    is merged into whichever neighbour holds more words - the surrounding speech
+    it most likely belongs to - and consecutive same-speaker runs are then joined.
+    Iterates until stable so a cluster of fragments collapses cleanly; a lone run
+    is returned unchanged.
+    """
+    def dur(run: dict) -> float:
+        w = run["words"]
+        return (w[-1]["end_seconds"] - w[0]["start_seconds"]) if w else 0.0
+
+    for _ in range(len(runs)):  # bounded: each pass merges at least one, or stops
+        if len(runs) <= 1:
+            break
+        merged_any = False
+        for i, run in enumerate(runs):
+            if len(run["words"]) <= _SMOOTH_MAX_WORDS and dur(run) < _SMOOTH_MAX_SECONDS:
+                prev = runs[i - 1] if i > 0 else None
+                nxt = runs[i + 1] if i < len(runs) - 1 else None
+                if prev is None and nxt is None:
+                    continue
+                if prev is None:
+                    run["speaker"] = nxt["speaker"]
+                elif nxt is None:
+                    run["speaker"] = prev["speaker"]
+                else:
+                    bigger = prev if len(prev["words"]) >= len(nxt["words"]) else nxt
+                    run["speaker"] = bigger["speaker"]
+                merged_any = True
+        if not merged_any:
+            break
+        coalesced: list[dict] = []
+        for run in runs:
+            if coalesced and coalesced[-1]["speaker"] == run["speaker"]:
+                coalesced[-1]["words"].extend(run["words"])
+            else:
+                coalesced.append(run)
+        runs = coalesced
+    return runs
+
+
 def split_segments_by_speaker(
     segments: list[dict],
     diarization: list[dict],
@@ -355,6 +409,14 @@ def split_segments_by_speaker(
                 runs[-1]["words"].append(word)
             else:
                 runs.append({"speaker": spk, "words": [word]})
+
+        # Absorb sub-second diarization-noise fragments at turn boundaries.
+        runs = _smooth_speaker_runs(runs)
+        if len({r["speaker"] for r in runs}) <= 1:
+            # Smoothing collapsed the segment to one speaker - keep it verbatim.
+            out.append({**seg, "speaker": runs[0]["speaker"] if runs else None})
+            continue
+
         for run in runs:
             rw = run["words"]
             text = (

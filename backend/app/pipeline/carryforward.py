@@ -1,12 +1,12 @@
-"""Cross-meeting carry-forward analysis (Session 22).
+"""Cross-meeting carry-forward analysis (Session 22; reliability rework 2026-08-21).
 
 A meeting rarely stands alone. When one meeting is the follow-up of an earlier
-one, the question a minute-taker actually has to answer is "what happened to
-everything we agreed last time?" - and answering it by hand means reading two
-sets of minutes side by side. This module answers it automatically.
+one, the question a minute-taker has to answer is "what happened to everything we
+agreed last time?" - and answering it by hand means reading two sets of minutes
+side by side. This module answers it automatically.
 
-Given meeting B marked as the follow-up of meeting A, we take A's action items
-and read B's transcript for evidence about each one, classifying it as:
+Given meeting B marked as the follow-up of meeting A, we take A's action items and
+read B's transcript for evidence about each one, classifying it as:
 
     completed     - B says the task is done
     in_progress   - B says it is under way but not finished
@@ -14,44 +14,44 @@ and read B's transcript for evidence about each one, classifying it as:
     changed       - B revised, replaced or dropped the task
     not_discussed - B never mentioned it (assigned in CODE, not by the model)
 
-Design notes, following the patterns the categorizer already earned the hard way:
+Reliability rework (addresses report limitation 6.2.4). The first design sent the
+WHOLE action list and a transcript chunk to the model at once and asked it to
+match everything simultaneously - which an 8B model could not do across a
+trilingual (English / Malay / Mandarin) transcript, misclassifying every item on
+the test pair. Two changes make the task tractable:
 
-  * The model is asked to cite [seg N] ids for every verdict, and a verdict
-    whose citations are all outside the chunk we sent is discarded. Same
-    anti-hallucination grounding as categorize.py.
-  * The model refers to previous actions by a small 1-based INDEX, never by a
-    database id - an 8B model echoes short ordinals reliably and mangles
-    arbitrary primary keys (the bug #17/#21 principle: don't hand the model a
-    job a lookup table does perfectly).
-  * 'not_discussed' is never something the model returns. It is what the code
-    fills in for any action the model produced no grounded verdict about, so a
-    silent model failure reads as "no evidence found" rather than inventing
-    progress that was never discussed.
-  * Long meetings are chunked exactly like categorization. Each chunk sees the
-    full previous-actions list, and verdicts are merged across chunks by
-    confidence order, so evidence anywhere in the meeting counts.
+  * Normalise to English first (B). Action items AND the transcript are translated
+    to English by the model before any matching, so it never has to reason across
+    three languages at once.
+  * Per-item retrieval + focused classification (A). For EACH action item we
+    retrieve only the handful of most relevant transcript segments (TF-IDF cosine)
+    and ask the model about THAT ONE item against THAT small evidence set - a far
+    easier judgement than matching a whole list against a whole transcript.
+
+The anti-hallucination guarantees are unchanged: a verdict is kept only if it
+cites a segment we actually sent (grounding, mapped back to the real segment id),
+'not_discussed' is filled in by code for anything left ungrounded, and the model
+refers to segments by a small local number, never a database id (the bug #17/#21
+principle - don't hand an 8B model a job a lookup table does perfectly).
 """
 from __future__ import annotations
 
-from app.db import get_conn
-from app.pipeline.categorize import (
-    _chat,
-    _chunk_segments,
-    _coerce_items,
-    _language_name,
-)
-from app.schemas.insights import ExtractedCarryForward
+from sklearn.feature_extraction.text import TfidfVectorizer
 
-# Verdicts the MODEL may return, ordered weakest -> strongest evidence of
-# movement. When two chunks disagree about the same action we keep the later
-# one in this order: a chunk that saw the task completed outranks one that only
-# saw it being worked on, which is the reading a human minute-taker would take
-# from "we started it... and actually we finished it yesterday".
-_MODEL_STATUSES = ("changed", "blocked", "in_progress", "completed")
-_STATUS_RANK = {s: i for i, s in enumerate(_MODEL_STATUSES)}
+from app.db import get_conn
+from app.pipeline.categorize import _chat
+
+# The four verdicts the model may return for an action item. 'not_discussed' is
+# never one the model is trusted to return - it is what the code assigns when no
+# grounded verdict comes back, so a silent failure reads as "no evidence found"
+# rather than invented progress.
+_CLASSIFY_STATUSES = {"completed", "in_progress", "blocked", "changed"}
 
 # What the code assigns when no grounded verdict came back for an action.
 NOT_DISCUSSED = "not_discussed"
+
+# How many transcript segments to put in front of the model per action item.
+_RETRIEVE_K = 8
 
 
 class NoPreviousMeeting(ValueError):
@@ -68,74 +68,138 @@ def _previous_actions(previous_meeting_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def _carry_forward_prompt(language: str, actions: list[dict]) -> str:
-    listing = "\n".join(
-        f"{i}. {a['description']}"
-        + (f" (owner: {a['owner']})" if a.get("owner") else "")
-        + (f" (was due: {a['due_date']})" if a.get("due_date") else "")
-        for i, a in enumerate(actions, start=1)
-    )
-    return (
-        "You are a meeting-minutes analyst tracking progress ACROSS two meetings.\n"
-        "Below is the numbered list of action items agreed in the PREVIOUS meeting. "
-        "The user will give you transcript lines from the FOLLOW-UP meeting.\n\n"
-        "PREVIOUS MEETING'S ACTION ITEMS:\n"
-        f"{listing}\n\n"
-        "Your job: for each previous action item that the follow-up transcript "
-        "ACTUALLY discusses, report what happened to it.\n"
-        "Rules:\n"
-        "- Report an item ONLY if the transcript lines genuinely refer to it. If an "
-        "item is not mentioned in these lines, LEAVE IT OUT entirely. Do not guess, "
-        "and never report progress that was not discussed.\n"
-        "- 'index' MUST be the number of the item in the list above.\n"
-        "- 'status' MUST be exactly one of: completed, in_progress, blocked, changed.\n"
-        "    completed   = the transcript says it is done or finished.\n"
-        "    in_progress = under way but not yet finished.\n"
-        "    blocked     = stuck, waiting on someone or something.\n"
-        "    changed     = revised, replaced, postponed or dropped.\n"
-        f"- 'note' is a SHORT evidence phrase (max ~20 words) written in {language}.\n"
-        "- Cite the supporting [seg N] id(s) in source_segment_ids for every entry.\n\n"
-        'Return ONLY a JSON object with exactly this shape. No markdown, no commentary:\n'
-        '{\n'
-        '  "updates": [{"index": 1, "status": "completed", "note": "...", "source_segment_ids": [12]}]\n'
-        '}\n'
-        "Use an empty list if these lines discuss none of the previous items."
-    )
+def _translate_to_english(texts: list[str], progress=print, batch: int = 25) -> list[str]:
+    """Translate each string to English via the model, preserving order and count.
+
+    Already-English text passes through unchanged. On any failure a text falls
+    back to its original wording, so the analysis still runs (just cross-lingual
+    for that one line) rather than aborting the whole pass.
+    """
+    out = list(texts)
+    for start in range(0, len(texts), batch):
+        block = texts[start:start + batch]
+        listing = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(block))
+        system = (
+            "You are a translator. Translate each numbered line into natural "
+            "English. If a line is already in English, return it unchanged. "
+            "Preserve names, numbers and dates exactly. Do not add, drop or merge "
+            "lines.\n"
+            'Return ONLY JSON: {"lines": [{"i": 1, "en": "..."}]}'
+        )
+        try:
+            raw = _chat(system=system, user=listing)
+        except Exception as exc:  # noqa: BLE001 - translation is best-effort
+            progress(f"[carry-forward] translation batch skipped: {type(exc).__name__}")
+            continue
+        got = raw.get("lines") if isinstance(raw, dict) else None
+        if not isinstance(got, list):
+            continue
+        for item in got:
+            if not isinstance(item, dict):
+                continue
+            try:
+                i = int(item.get("i"))
+            except (TypeError, ValueError):
+                continue
+            en = item.get("en")
+            if en and 1 <= i <= len(block):
+                out[start + i - 1] = str(en).strip()
+    return out
 
 
-def _validate_updates(raw: dict, valid_ids: set[int], n_actions: int) -> list[ExtractedCarryForward]:
-    """Parse + ground the model's reply: keep only well-formed updates that name
-    a real action and cite a segment we actually sent."""
-    norm: dict = {}
-    if isinstance(raw, dict):
-        for k, v in raw.items():
-            if isinstance(k, str):
-                norm["".join(ch for ch in k.lower() if ch.isalnum())] = v
-    items = _coerce_items(norm.get("updates"), ExtractedCarryForward)
-    kept: list[ExtractedCarryForward] = []
-    for it in items:
-        if not (1 <= it.index <= n_actions):
-            continue  # hallucinated an item number that isn't in the list
-        if it.status not in _STATUS_RANK:
-            continue  # not one of the four verdicts we asked for
-        it.source_segment_ids = [i for i in it.source_segment_ids if i in valid_ids]
-        if not it.source_segment_ids:
-            continue  # ungrounded - the whole point is that evidence must exist
-        kept.append(it)
-    return kept
+def _retrieve_relevant(
+    action_en: str, segment_texts_en: list[str], k: int = _RETRIEVE_K
+) -> list[int]:
+    """Indices of the segments most relevant to an action item, by TF-IDF cosine.
+
+    Everything is English by the time this runs, so lexical similarity is a sound,
+    dependency-light retriever. Falls back to the first k segments if the action
+    shares no vocabulary with any segment, so the model always gets something to
+    judge and can still answer 'not_discussed'.
+    """
+    if not segment_texts_en:
+        return []
+    try:
+        vec = TfidfVectorizer(stop_words="english", ngram_range=(1, 2), min_df=1)
+        matrix = vec.fit_transform(segment_texts_en + [action_en])
+        # TF-IDF rows are L2-normalised, so this dot product IS cosine similarity.
+        sims = (matrix[:-1] @ matrix[-1].T).toarray().ravel()
+    except Exception:  # noqa: BLE001 - never let retrieval sink the pass
+        return list(range(min(k, len(segment_texts_en))))
+    order = list(sims.argsort()[::-1])
+    top = [int(i) for i in order if sims[i] > 0][:k]
+    if not top:
+        top = [int(i) for i in order[:k]]
+    return sorted(top)  # chronological order reads naturally as excerpts
+
+
+def _classify_action(
+    action_en: str, excerpts: list[tuple[int, str]]
+) -> tuple[str | None, str | None, list[int]]:
+    """Ask the model what became of ONE action item, given a few excerpts.
+
+    `excerpts` is [(local_number, english_text), ...]. Returns
+    (status, note, cited_local_numbers). Returns (None, None, []) - which the
+    caller records as not_discussed - when the model declines, returns a status
+    outside the four, or cites nothing we actually sent (ungrounded).
+    """
+    if not excerpts:
+        return None, None, []
+    listing = "\n".join(f"[{n}] {t}" for n, t in excerpts)
+    system = (
+        "You track ONE action item across two meetings. You are given an action "
+        "item agreed in the PREVIOUS meeting and numbered excerpts from the "
+        "FOLLOW-UP meeting's transcript. Decide what the follow-up meeting says "
+        "became of THIS action.\n"
+        "'status' MUST be exactly one of: completed, in_progress, blocked, "
+        "changed, not_discussed.\n"
+        "  completed     = an excerpt says it is done or finished.\n"
+        "  in_progress   = under way but not yet finished.\n"
+        "  blocked       = stuck, waiting on someone or something.\n"
+        "  changed       = revised, replaced, postponed or dropped.\n"
+        "  not_discussed = none of the excerpts actually refer to this action.\n"
+        "Choose one of the first four ONLY if an excerpt genuinely refers to this "
+        "action; otherwise not_discussed. In 'cited' list the excerpt number(s) "
+        "that support the verdict. Keep 'note' under 20 words.\n"
+        'Return ONLY JSON: {"status": "...", "cited": [1], "note": "..."}'
+    )
+    user = f"ACTION ITEM (previous meeting):\n{action_en}\n\nFOLLOW-UP EXCERPTS:\n{listing}"
+    try:
+        raw = _chat(system=system, user=user)
+    except Exception:  # noqa: BLE001 - one failed item must not sink the pass
+        return None, None, []
+    if not isinstance(raw, dict):
+        return None, None, []
+    status = str(raw.get("status", "")).strip().lower().replace(" ", "_")
+    if status not in _CLASSIFY_STATUSES:
+        return None, None, []  # not_discussed / garbage -> code assigns not_discussed
+    valid = {n for n, _ in excerpts}
+    cited: list[int] = []
+    cited_raw = raw.get("cited")
+    if isinstance(cited_raw, list):
+        for c in cited_raw:
+            try:
+                n = int(c)
+            except (TypeError, ValueError):
+                continue
+            if n in valid and n not in cited:
+                cited.append(n)
+    if not cited:
+        return None, None, []  # ungrounded -> not_discussed
+    note = raw.get("note")
+    return status, (str(note).strip() if note else None), cited
 
 
 def analyse_carry_forward(meeting_id: int, progress=print) -> list[dict]:
     """Work out what this meeting said about the previous meeting's actions.
 
     Returns one dict per previous action item (including the ones never
-    mentioned), ready to persist. Raises NoPreviousMeeting when the meeting has
-    no follow-up link, and ValueError when it has no transcript.
+    mentioned), ready to persist. Raises NoPreviousMeeting when the meeting has no
+    follow-up link, and ValueError when it has no transcript.
     """
     with get_conn() as conn:
         meeting = conn.execute(
-            "SELECT follow_up_of, primary_language, language FROM meetings WHERE id = ?",
-            (meeting_id,),
+            "SELECT follow_up_of FROM meetings WHERE id = ?", (meeting_id,)
         ).fetchone()
         if meeting is None:
             raise ValueError(f"Meeting {meeting_id} not found")
@@ -143,11 +207,7 @@ def analyse_carry_forward(meeting_id: int, progress=print) -> list[dict]:
         if not previous_id:
             raise NoPreviousMeeting(f"Meeting {meeting_id} is not linked to a previous meeting")
         seg_rows = conn.execute(
-            "SELECT id, speaker_id, text FROM segments WHERE meeting_id = ? ORDER BY start_seconds",
-            (meeting_id,),
-        ).fetchall()
-        spk_rows = conn.execute(
-            "SELECT id, label, display_name FROM speakers WHERE meeting_id = ?",
+            "SELECT id, text FROM segments WHERE meeting_id = ? ORDER BY start_seconds",
             (meeting_id,),
         ).fetchall()
 
@@ -160,58 +220,46 @@ def analyse_carry_forward(meeting_id: int, progress=print) -> list[dict]:
         return []
 
     segments = [dict(r) for r in seg_rows]
-    speaker_labels = {r["id"]: (r["display_name"] or r["label"]) for r in spk_rows}
 
-    primary = (meeting["primary_language"] or "auto").lower()
-    out_lang = primary if primary != "auto" else (meeting["language"] or "en")
-    language = _language_name(out_lang)
-
-    chunks = _chunk_segments(segments, speaker_labels)
+    # --- Normalise to English (approach B) so matching is single-language ---
+    actions_en = _translate_to_english([a["description"] for a in actions], progress)
+    segments_en = _translate_to_english([s["text"] for s in segments], progress)
     progress(
-        f"[carry-forward] {len(actions)} previous action(s) vs {len(segments)} segment(s) "
-        f"in {len(chunks)} chunk(s), notes in {language}"
+        f"[carry-forward] {len(actions)} action(s) vs {len(segments)} segment(s); "
+        "normalised to English, classifying one item at a time"
     )
 
-    # index -> best verdict so far
-    best: dict[int, ExtractedCarryForward] = {}
-    system = _carry_forward_prompt(language, actions)
-    for i, (chunk_text, ids) in enumerate(chunks, start=1):
-        try:
-            raw = _chat(
-                system=system,
-                user=(
-                    f"Follow-up meeting transcript, part {i} of {len(chunks)}:\n\n{chunk_text}"
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001 - one bad chunk must not sink the pass
-            progress(f"[carry-forward] chunk {i} SKIPPED: {type(exc).__name__}: {str(exc)[:120]}")
-            continue
-        for upd in _validate_updates(raw, ids, len(actions)):
-            prior = best.get(upd.index)
-            if prior is None or _STATUS_RANK[upd.status] >= _STATUS_RANK[prior.status]:
-                best[upd.index] = upd
-
     results: list[dict] = []
-    for idx, action in enumerate(actions, start=1):
-        upd = best.get(idx)
+    tally: dict[str, int] = {}
+    for idx, action in enumerate(actions):
+        # --- Retrieve only the few most relevant segments for THIS item (A) ---
+        top = _retrieve_relevant(actions_en[idx], segments_en)
+        excerpts = [(pos + 1, segments_en[si]) for pos, si in enumerate(top)]
+        localnum_to_segment_id = {pos + 1: segments[si]["id"] for pos, si in enumerate(top)}
+
+        # --- Classify THIS item against just those excerpts ---
+        status, note, cited = _classify_action(actions_en[idx], excerpts)
+        if status and cited:
+            source_segment_id = localnum_to_segment_id.get(cited[0])
+        else:
+            status, note, source_segment_id = NOT_DISCUSSED, None, None
+
+        tally[status] = tally.get(status, 0) + 1
         results.append(
             {
                 "previous_action_id": action["id"],
                 "description": action["description"],
                 "owner": action.get("owner"),
-                "status": upd.status if upd else NOT_DISCUSSED,
-                "note": (upd.note or None) if upd else None,
-                "source_segment_id": upd.source_segment_ids[0] if upd else None,
+                "status": status,
+                "note": note,
+                "source_segment_id": source_segment_id,
             }
         )
 
     discussed = sum(1 for r in results if r["status"] != NOT_DISCUSSED)
-    tally = ", ".join(
-        f"{s}={sum(1 for r in results if r['status'] == s)}"
-        for s in (*_MODEL_STATUSES, NOT_DISCUSSED)
-    )
     progress(
-        f"[carry-forward] {discussed}/{len(results)} previous action(s) discussed ({tally})"
+        f"[carry-forward] {discussed}/{len(results)} previous action(s) discussed "
+        f"({', '.join(f'{k}={v}' for k, v in sorted(tally.items()))})"
     )
     return results
 

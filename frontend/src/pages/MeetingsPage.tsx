@@ -238,7 +238,7 @@ export default function MeetingsPage({ onOpen }: { onOpen: (id: number) => void 
                     {st.label}
                   </span>
                   <button
-                    className="ghost small"
+                    className="small modal-danger"
                     title="Delete this meeting"
                     aria-label={`Delete meeting: ${m.title}`}
                     onClick={(e) => {
