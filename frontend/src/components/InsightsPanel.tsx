@@ -39,6 +39,10 @@ export default function InsightsPanel({
     },
   });
 
+  // Regenerating discards the current insights, including any the user has
+  // corrected by hand, so it is confirmed in-app like the delete actions.
+  const [confirmingRegen, setConfirmingRegen] = useState(false);
+
   const data = insights.data;
   const canGenerate =
     meetingStatus === "diarized" ||
@@ -71,7 +75,14 @@ export default function InsightsPanel({
       )}
       {canGenerate && (
         <div style={{ marginTop: 8 }}>
-          <button className="small" disabled={generating} onClick={() => categorize.mutate()}>
+          <button
+            className="small"
+            disabled={generating}
+            onClick={() => {
+              if (meetingStatus === "ready") setConfirmingRegen(true);
+              else categorize.mutate();
+            }}
+          >
             {buttonLabel}
           </button>
           {categorize.isError && (
@@ -81,6 +92,14 @@ export default function InsightsPanel({
           )}
         </div>
       )}
+      <ConfirmDialog
+        open={confirmingRegen}
+        title="Regenerate insights?"
+        message="The current summary and all five categories are discarded and extracted again from the transcript. Any wording you corrected by hand is lost."
+        confirmLabel="Regenerate"
+        onConfirm={() => { setConfirmingRegen(false); categorize.mutate(); }}
+        onCancel={() => setConfirmingRegen(false)}
+      />
 
       <Category title="Action Items" category="action_items" meetingId={meetingId}
         items={data?.action_items} onJump={onJumpToSegment}
