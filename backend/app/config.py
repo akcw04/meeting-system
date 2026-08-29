@@ -53,7 +53,7 @@ class Settings(BaseSettings):
 
     # Maximum upload size in GB, enforced server-side during the streaming write.
     # Raise for larger recordings; mind free disk + processing time.
-    max_upload_gb: float = 2.0
+    max_upload_gb: float = 4.0
 
     data_dir: Path = Path("./data")
     db_path: Path = Path("./data/app.db")
