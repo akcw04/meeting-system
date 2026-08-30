@@ -47,8 +47,9 @@ def _sweep_orphaned_meetings() -> None:
         print(f"[startup] swept orphaned meetings: {n1} mid-pipeline, {n2} mid-categorize")
 
 
-# Personal + system intro printed to the console on startup (FYP requirement:
-# the program must begin with a personal and system introduction).
+# Console introduction printed on startup: it names the system and its author
+# before any work begins, so anyone running it from a terminal can see what
+# they have launched and who wrote it.
 _STARTUP_BANNER = r"""
 ============================================================
   MULTILINGUAL MEETING TRANSCRIPTION & CONTENT
