@@ -307,12 +307,17 @@ export async function rerunCarryForward(meetingId: number): Promise<void> {
 }
 
 export const audioUrl = (meetingId: number) => `${API}/meetings/${meetingId}/audio`;
+const templateQuery = (templateId?: number | null) =>
+  templateId ? `?template_id=${templateId}` : "";
+
 /** Export URL; pass a templateId to fill a saved template instead of the default. */
 export const exportUrl = (meetingId: number, templateId?: number | null) =>
-  `${API}/meetings/${meetingId}/export/docx${templateId ? `?template_id=${templateId}` : ""}`;
-/** One document covering this meeting and every meeting it follows up. */
-export const combinedExportUrl = (meetingId: number) =>
-  `${API}/meetings/${meetingId}/export/combined`;
+  `${API}/meetings/${meetingId}/export/docx${templateQuery(templateId)}`;
+/** One document covering this meeting and every meeting it follows up. A
+ * templateId fills the user's own document with the whole series (each entry
+ * tagged with the meeting it came from) instead of the built-in layout. */
+export const combinedExportUrl = (meetingId: number, templateId?: number | null) =>
+  `${API}/meetings/${meetingId}/export/combined${templateQuery(templateId)}`;
 
 /** How each carry-forward verdict is worded in the UI. Keys match the backend's
  * stored values; `not_discussed` is the one the SYSTEM assigns when the model

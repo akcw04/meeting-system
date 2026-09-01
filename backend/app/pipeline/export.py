@@ -8,13 +8,15 @@ A meeting becomes a .docx three ways:
   - a COMBINED minutes document spanning a follow-up chain of meetings,
     built by export_combined_docx() (Session 22).
 
-The first two share build_meeting_context() for data shaping - this module owns
-the data, the template owns the formatting (the IR's Separation-of-Concerns
-design). The combined document has no user-supplied template to fill (a
-template describes ONE meeting's layout), so it is composed directly with
-python-docx in the same house style as the built-in template.
+Data shaping is shared: build_meeting_context() for one meeting,
+build_combined_context() for a whole follow-up chain. Either can feed either
+renderer - this module owns the data, the template owns the formatting (the
+IR's Separation-of-Concerns design). So a combined export honours the user's
+own document too: export_combined_docx() lays out the built-in house style,
+while fill_user_document(..., combined=True) pours the same pooled data into
+the user's layout.
 
-Output: data/outputs/<meeting_id>/<slug>_minutes.docx
+Output: data/outputs/<meeting_id>/<slug>[_combined]_minutes[_<template>].docx
 Re-rendered on every export request so transcript/insight edits are reflected.
 """
 from __future__ import annotations
@@ -56,6 +58,28 @@ def _slug(text: str, max_len: int = 40) -> str:
     text = re.sub(r"[^\w\s-]", "", text).strip().lower()
     text = re.sub(r"[\s_-]+", "_", text)
     return text[:max_len] or "meeting"
+
+
+def output_filename(
+    title: str, *, combined: bool = False, template_name: str | None = None
+) -> str:
+    """Filename for an exported document.
+
+    The chosen template's name is part of it so a templated export and the
+    built-in one never collide. They used to share a name, so a browser saved
+    the second download as "... (1).docx" and opening the familiar name showed
+    the DEFAULT layout - making the system look as though it had ignored the
+    template the user picked.
+    """
+    suffix = ""
+    if template_name:
+        suffix = _slug(template_name, 24)
+        # A truncated template name shouldn't end mid-word ("..._templa"), so
+        # drop the partial trailing token when the slug was actually cut.
+        if "_" in suffix and len(_slug(template_name, 200)) > len(suffix):
+            suffix = suffix.rsplit("_", 1)[0]
+    parts = [_slug(title), "combined" if combined else "", "minutes", suffix]
+    return "_".join(p for p in parts if p) + ".docx"
 
 
 def build_meeting_context(meeting_id: int) -> dict:
@@ -180,7 +204,7 @@ def export_docx(meeting_id: int, template_path: Path | None = None) -> Path:
 
     out_dir = settings.output_dir / str(meeting_id)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{_slug(context['meeting']['title'])}_minutes.docx"
+    out_path = out_dir / output_filename(context["meeting"]["title"])
     doc.save(str(out_path))
     return out_path
 
@@ -236,6 +260,121 @@ def _table(doc, headers: list[str], rows: list[list[str]]):
 
 def _none_recorded(doc) -> None:
     doc.add_paragraph("None recorded.").runs[0].italic = True
+
+
+def _unique(values):
+    """Order-preserving de-duplication - keeps a series' attendee/language
+    lists in the order they were first seen rather than alphabetised."""
+    seen, out = set(), []
+    for v in values:
+        if v and v not in seen:
+            seen.add(v)
+            out.append(v)
+    return out
+
+
+def build_combined_context(meeting_id: int) -> dict:
+    """Shape a whole follow-up CHAIN into the same context shape as
+    build_meeting_context, so a user's own document can be filled with a series
+    of meetings as well as with a single one.
+
+    Everything is pooled in chain order and tagged with the meeting it came
+    from, so no outcome is silently attributed to the wrong session:
+
+      - the scalars describe the SERIES - a date range, the total duration,
+        every language and every attendee seen across it;
+      - action items, decisions, deadlines, issues, risks and the carry-forward
+        verdicts are concatenated, each carrying a 'meeting' key the fill engine
+        renders as its own column (tables) or prefix (bullets);
+      - 'summaries' holds one entry per meeting, in order; 'summary' is the same
+        content flattened for a marker sitting inline in a sentence.
+
+    Transcripts are deliberately left OUT, exactly as the built-in combined
+    layout leaves them out: each meeting's own export already carries its
+    verbatim record, and pooling several hours of speech would swamp the
+    minutes. 'transcript' is therefore empty and 'transcript_note' states the
+    omission in the document itself rather than leaving a silent gap.
+
+    Raises ValueError if the meeting is missing or has no transcript yet.
+    """
+    # Local import: carryforward -> categorize -> config, so importing it at
+    # module scope would make this module's import order matter.
+    from app.pipeline.carryforward import meeting_chain
+
+    chain = meeting_chain(meeting_id)  # oldest first
+    contexts = {mid: build_meeting_context(mid) for mid in chain}
+    latest = contexts[meeting_id]["meeting"]
+    n = len(chain)
+
+    with get_conn() as conn:
+        durations = conn.execute(
+            "SELECT id, duration_seconds FROM meetings "
+            f"WHERE id IN ({','.join('?' * n)})",
+            chain,
+        ).fetchall()
+    total_seconds = sum((r["duration_seconds"] or 0) for r in durations)
+
+    dates = [contexts[mid]["meeting"]["date"] for mid in chain]
+    span = dates[0] if dates[0] == dates[-1] else f"{dates[0]} to {dates[-1]}"
+
+    def pooled(key: str) -> list[dict]:
+        """Every item of one category across the series, each tagged with the
+        meeting it came from."""
+        return [
+            {**item, "meeting": contexts[mid]["meeting"]["title"]}
+            for mid in chain
+            for item in contexts[mid][key]
+        ]
+
+    summaries = [
+        {
+            "title": contexts[mid]["meeting"]["title"],
+            "date": contexts[mid]["meeting"]["date"],
+            "text": contexts[mid]["summary"],
+        }
+        for mid in chain
+    ]
+    attendees = _unique(a for mid in chain for a in contexts[mid]["attendees"])
+
+    return {
+        # The fill engine branches on this: a combined document needs the
+        # meeting each row came from, a single-meeting one does not.
+        "combined": True,
+        "chain_length": n,
+        # The display title below is deliberately wordy; the filename uses the
+        # plain meeting title so downloads stay readable.
+        "file_title": latest["title"],
+        "meeting": {
+            # Named as a series so a reader never mistakes a pooled document
+            # for the minutes of the latest meeting alone.
+            "title": latest["title"] if n == 1
+                     else f"{latest['title']} (combined series of {n} meetings)",
+            "date": span,
+            "duration": _fmt_time(total_seconds),
+            "language_name": ", ".join(
+                _unique(contexts[mid]["meeting"]["language_name"] for mid in chain)
+            ) or "-",
+            "speaker_count": len(attendees),
+        },
+        "attendees": attendees,
+        "summary": "\n".join(
+            f"{s['title']} ({s['date']}): {s['text']}" for s in summaries
+        ),
+        "summaries": summaries,
+        "action_items": pooled("action_items"),
+        "decisions": pooled("decisions"),
+        "deadlines": pooled("deadlines"),
+        "issues": pooled("issues"),
+        "risks": pooled("risks"),
+        "carry_forward": pooled("carry_forward"),
+        "transcript": [],
+        "transcript_note": (
+            "Full transcripts are not reproduced in a combined document - "
+            f"each of the {n} meeting{'s' if n != 1 else ''} in this series "
+            "carries its verbatim record in its own export."
+        ),
+        "generated_on": datetime.now().strftime("%d %B %Y, %H:%M"),
+    }
 
 
 def export_combined_docx(meeting_id: int) -> Path:
@@ -400,6 +539,6 @@ def export_combined_docx(meeting_id: int) -> Path:
 
     out_dir = settings.output_dir / str(meeting_id)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{_slug(latest['meeting']['title'])}_combined_minutes.docx"
+    out_path = out_dir / output_filename(latest["meeting"]["title"], combined=True)
     doc.save(str(out_path))
     return out_path

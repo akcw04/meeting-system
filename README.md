@@ -9,6 +9,8 @@ mid-sentence: the transcript is kept exactly as spoken while the summary and the
 document are produced in the one language you choose. A meeting can also be linked as a
 **follow-up** to an earlier one, in which case Kairos reports what happened to each of the
 earlier meeting's action items and can export combined minutes for the whole series.
+Every export — single or combined — goes into either the built-in layout or a Word
+document of your own, so the minutes come out in your organisation's house style.
 
 **Everything runs on your own machine.** No cloud APIs at runtime: audio processing,
 speech recognition, speaker identification and the language model all execute locally,

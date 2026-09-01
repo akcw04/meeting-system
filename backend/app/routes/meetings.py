@@ -9,6 +9,9 @@ GET   /meetings/{id}/carry-forward  -> progress on the previous meeting's action
 POST  /meetings/{id}/carry-forward  -> re-run that analysis
 GET   /meetings/{id}/export/docx    -> minutes for this meeting alone
 GET   /meetings/{id}/export/combined-> minutes for the whole follow-up chain
+
+Both export routes take an optional ?template_id=<id> to fill the user's own
+saved Word document instead of the built-in layout.
 """
 from __future__ import annotations
 
@@ -563,19 +566,54 @@ def rerun_carry_forward(
     return MeetingResponse.model_validate(dict(updated))
 
 
+def _resolve_template(template_id: int) -> tuple[Path, str]:
+    """The on-disk path and display name of a saved template.
+
+    Raises 404 if the id is unknown and 500 if the row exists but its file has
+    gone missing, so both export routes report a bad template the same way.
+    """
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, name FROM templates WHERE id = ?", (template_id,)
+        ).fetchone()
+    if row is None:
+        raise HTTPException(404, f"Template {template_id} not found")
+    path = settings.templates_dir / f"{template_id}.docx"
+    if not path.is_file():
+        raise HTTPException(500, f"Template {template_id} file is missing on disk.")
+    return path, row["name"]
+
+
 @router.get("/{meeting_id}/export/combined")
-def export_meeting_combined(meeting_id: int) -> FileResponse:
+def export_meeting_combined(
+    meeting_id: int, template_id: int | None = None
+) -> FileResponse:
     """Download ONE Word document covering this meeting and every meeting it
     follows up, including the progress made on each previous action item.
 
-    Uses the system's own combined layout rather than a user template: a user
-    template describes the shape of a SINGLE meeting's minutes, so there is no
-    meaningful way to fill one with a whole series.
+    Default: the system's own combined layout. Pass ?template_id=<id> to pour
+    the same series into the user's own document instead - every list is pooled
+    across the chain and tagged with the meeting it came from, so the
+    organisation keeps its house style for combined minutes too.
     """
-    from app.pipeline.export import export_combined_docx
+    from app.pipeline.export import TemplateRenderError, export_combined_docx
+    from app.pipeline.fill_template import fill_user_document
 
     try:
-        path = export_combined_docx(meeting_id)
+        if template_id is not None:
+            tpath, tname = _resolve_template(template_id)
+            path, _report = fill_user_document(
+                meeting_id, tpath, template_name=tname, combined=True
+            )
+        else:
+            path = export_combined_docx(meeting_id)
+    except HTTPException:
+        raise  # 404/500 from _resolve_template are intentional
+    except TemplateRenderError as exc:
+        # A user document the user can fix -> 400; our own layout failing -> 500.
+        # (TemplateRenderError subclasses ValueError, so this MUST precede the
+        # generic ValueError handler below.)
+        raise HTTPException(400 if template_id is not None else 500, str(exc))
     except ValueError as exc:
         raise HTTPException(409, str(exc))
 
@@ -601,16 +639,8 @@ def export_meeting_docx(meeting_id: int, template_id: int | None = None) -> File
 
     try:
         if template_id is not None:
-            with get_conn() as conn:
-                trow = conn.execute(
-                    "SELECT id FROM templates WHERE id = ?", (template_id,)
-                ).fetchone()
-            if trow is None:
-                raise HTTPException(404, f"Template {template_id} not found")
-            tpath = settings.templates_dir / f"{template_id}.docx"
-            if not tpath.is_file():
-                raise HTTPException(500, f"Template {template_id} file is missing on disk.")
-            path, _report = fill_user_document(meeting_id, tpath)
+            tpath, tname = _resolve_template(template_id)
+            path, _report = fill_user_document(meeting_id, tpath, template_name=tname)
         else:
             path = export_docx(meeting_id)
     except HTTPException:

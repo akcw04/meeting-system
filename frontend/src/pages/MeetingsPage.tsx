@@ -70,7 +70,6 @@ export default function MeetingsPage({ onOpen }: { onOpen: (id: number) => void 
     setFileError(null);
     setFile(f);
     if (!title) setTitle(f.name.replace(/\.[^.]+$/, ""));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [title]);
 
   return (

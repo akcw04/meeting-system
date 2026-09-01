@@ -68,6 +68,12 @@ export default function ReviewPage({
   // Saved export templates (IR §2.2.7) for the export picker; "default" = built-in.
   const templates = useQuery({ queryKey: ["templates"], queryFn: listTemplates });
   const [templateId, setTemplateId] = useState<number | "default">("default");
+  const savedTemplates = templates.data ?? [];
+  // The template actually chosen, or undefined for the built-in layout. Both
+  // export buttons and the picker's own styling key off this, so a user can
+  // see which layout they are about to get before they click.
+  const chosenTemplate =
+    templateId === "default" ? undefined : savedTemplates.find((t) => t.id === templateId);
 
   // --- search ---
   const [q, setQ] = useState("");
@@ -151,7 +157,6 @@ export default function ReviewPage({
       audio.removeEventListener("seeking", sync);
       audio.removeEventListener("play", onPlay);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [segments.data]);
 
   // Click a line's timestamp = "preview just this line": jump there, play, and
@@ -219,22 +224,57 @@ export default function ReviewPage({
         </div>
 
         <div className="export-group">
-          <select
-            value={String(templateId)}
-            onChange={(e) =>
-              setTemplateId(e.target.value === "default" ? "default" : Number(e.target.value))
+          {/* The picker is a labelled pill rather than a bare dropdown, and
+              tints itself when a saved template is chosen: the commonest
+              worry is "did it actually use MY layout?", so the control that
+              governs both export buttons has to answer that at a glance. */}
+          <div
+            className={
+              "template-picker" +
+              (chosenTemplate ? " active" : "") +
+              (hasTranscript ? "" : " disabled")
             }
-            disabled={!hasTranscript}
-            aria-label="Export template"
-            title="Choose the Word template to export into"
+            title={
+              chosenTemplate
+                ? `Both exports will be filled into your own document: ${chosenTemplate.name}`
+                : "Exports use the system's built-in layout. Pick one of your own templates to use your house style."
+            }
           >
-            <option value="default">Default template</option>
-            {(templates.data ?? []).map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
+            <span className="template-picker-label">Template</span>
+            <span className="template-picker-value">
+              {/* Hidden mirror of the SELECTED label: it sets the width and the
+                  <select> is laid over it, so the pill hugs what it shows
+                  instead of reserving room for the longest entry. */}
+              <span aria-hidden="true" className="template-picker-sizer">
+                {chosenTemplate ? chosenTemplate.name : "Default layout"}
+              </span>
+              <select
+                value={String(templateId)}
+                onChange={(e) =>
+                  setTemplateId(e.target.value === "default" ? "default" : Number(e.target.value))
+                }
+                disabled={!hasTranscript}
+                aria-label="Export template"
+              >
+                <optgroup label="Built in">
+                  <option value="default">Default layout</option>
+                </optgroup>
+                {savedTemplates.length > 0 ? (
+                  <optgroup label="Your templates">
+                    {savedTemplates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : (
+                  <option value="none" disabled>
+                    No saved templates — add one on the Templates tab
+                  </option>
+                )}
+              </select>
+            </span>
+          </div>
           <a
             href={exportUrl(meetingId, templateId === "default" ? null : templateId)}
             download
@@ -244,11 +284,21 @@ export default function ReviewPage({
           {/* Only offered once a previous meeting is linked — a "combined"
               document of one meeting would just be the ordinary export. */}
           {meeting.data?.follow_up_of && (
-            <a href={combinedExportUrl(meetingId)} download>
+            <a
+              href={combinedExportUrl(
+                meetingId,
+                templateId === "default" ? null : templateId,
+              )}
+              download
+            >
               <button
                 className="ghost"
                 disabled={!hasTranscript}
-                title="One document covering this meeting and every meeting it follows up, including progress on the previous actions"
+                title={
+                  "One document covering this meeting and every meeting it follows up, " +
+                  "including progress on the previous actions" +
+                  (chosenTemplate ? `, filled into ${chosenTemplate.name}` : "")
+                }
               >
                 Export combined
               </button>
@@ -266,7 +316,7 @@ export default function ReviewPage({
             <li><b>② Audio</b> — press ▶ for continuous playback; the spoken line follows along.</li>
             <li><b>③ Speakers</b> — rename a speaker once; it updates everywhere.</li>
             <li><b>④ Insights &amp; export</b> — generate the summary, then pick a template and Export Word (top-right).</li>
-            <li><b>⑤ Follow-up</b> — link an earlier meeting to see what happened to everything agreed there, and export both as one document.</li>
+            <li><b>⑤ Follow-up</b> — link an earlier meeting to see what happened to everything agreed there, and export both as one document (your chosen template applies here too).</li>
           </ol>
         </div>
       )}

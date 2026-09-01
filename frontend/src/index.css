@@ -84,16 +84,61 @@ code {
   font-family: "Cascadia Code", Consolas, monospace;
 }
 
-/* Export template picker + button (review page) and template-card actions. */
-.export-group { display: flex; gap: 12px; align-items: center; }
-.export-group select {
-  max-width: 200px;
+/* Export template picker + buttons (review page) and template-card actions. */
+.export-group { display: flex; gap: 10px; align-items: center; }
+
+/* The picker is a single labelled pill, not a bare dropdown: the caption says
+   what the control is for, and the whole pill takes the accent colour once a
+   saved template is chosen. Both Export buttons obey it, so "which layout am I
+   about to get?" is answerable without opening the menu. */
+.template-picker {
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 0 10px 0 11px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-soft);
+  transition: border-color .15s, background .15s, color .15s;
+}
+.template-picker-label {
+  font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); white-space: nowrap; user-select: none;
+}
+/* A native <select> always reserves room for its LONGEST option, so picking
+   "Default layout" left a pill wide enough for the longest template name. The
+   hidden sizer below mirrors the SELECTED label and drives the width; the
+   select is laid over it, so the pill only ever takes the space it shows. */
+.template-picker-value { position: relative; display: inline-block; max-width: 200px; }
+.template-picker-sizer {
+  display: block; padding: 7px 18px 7px 0;   /* 18px reserves the chevron column */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  visibility: hidden;
+}
+.template-picker select {
+  position: absolute; inset: 0; width: 100%;
+  border: 0; border-radius: 0; background-color: transparent;
+  padding: 0 18px 0 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   appearance: none; -webkit-appearance: none;
-  padding-right: 30px;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%236b7785' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' d='M2.5 4.5 L6 8 L9.5 4.5'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 10px center;
+  background-position: right center;
 }
+/* The pill carries the focus ring, so the select inside drops its own. */
+.template-picker select:focus { outline: none; }
+.template-picker:focus-within { border-color: var(--accent); outline: 2px solid var(--accent-soft); }
+.template-picker.active {
+  border-color: var(--accent); background: var(--accent-soft);
+}
+.template-picker.active .template-picker-label { color: var(--accent); }
+/* The sizer must carry the same weight as the select or the width falls short. */
+.template-picker.active select,
+.template-picker.active .template-picker-sizer { font-weight: 600; }
+.template-picker.active select { color: var(--accent); }
+/* Greyed out with the export buttons while a meeting has no transcript yet. */
+.template-picker.disabled { opacity: .5; }
+.template-picker.disabled select { cursor: not-allowed; }
+.template-picker optgroup { font-style: normal; font-weight: 700; color: var(--muted); }
+.template-picker option { font-weight: 400; color: var(--text); }
+
 .card-actions { display: flex; gap: 8px; }
 
 input, select, textarea {

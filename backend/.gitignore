@@ -15,6 +15,9 @@ data/*.db-journal
 data/uploads/
 data/outputs/
 data/models/
+# User-uploaded export templates are runtime data like the uploads above -
+# the repo carries code only, so a tester's own .docx never lands in a commit.
+data/templates/
 
 # OS
 .DS_Store

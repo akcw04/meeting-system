@@ -20,7 +20,10 @@ fires inside a sentence. We only INSERT content (never restyle), so fonts and
 layout are preserved.
 
 `fill_user_document` returns the saved path + a report of which fields were
-placed (and how) and which had data but found no spot.
+placed (and how) and which had data but found no spot. Pass `combined=True` to
+fill the SAME document with a whole follow-up chain instead of one meeting:
+every list is pooled across the series and tagged with the meeting it came
+from, so an organisation keeps its own layout for combined minutes too.
 """
 from __future__ import annotations
 
@@ -33,7 +36,12 @@ from docx.oxml import OxmlElement
 from docx.text.paragraph import Paragraph
 
 from app.config import settings
-from app.pipeline.export import TemplateRenderError, _slug, build_meeting_context
+from app.pipeline.export import (
+    TemplateRenderError,
+    build_combined_context,
+    build_meeting_context,
+    output_filename,
+)
 
 # --- recognised field names (headings AND [[markers]]) ---
 # English + Chinese + Bahasa Melayu (added 2026-08-07, so a Malaysian
@@ -86,9 +94,17 @@ _FIELD_SYNONYMS = {
                       "上次会议跟进", "上次会议回顾", "前次行动项", "上次行动事项",
                       "perkara berbangkit", "kemajuan tindakan lepas",
                       "tindakan mesyuarat lepas"],
-    "transcript": ["transcript", "full transcript", "meeting transcript", "verbatim", "minutes",
-                   "逐字稿", "全文", "会议记录", "记录", "完整记录", "会议全文",
-                   "transkrip", "transkrip penuh", "minit penuh", "catatan", "rekod mesyuarat"],
+    # NOTE: the words a document uses to NAME ITSELF are deliberately absent
+    # here - "minutes", "会议记录"/"记录", "rekod mesyuarat", "catatan". They are
+    # what a minutes template calls its own title, not what it calls a verbatim
+    # section, and including them meant a heading like "MINUTES OF MEETING"
+    # claimed the transcript field and had the whole transcript poured under the
+    # document title (BUGS.md #34). Every unambiguous name is still here, in all
+    # three languages, so a real transcript section still fills.
+    "transcript": ["transcript", "full transcript", "meeting transcript", "verbatim",
+                   "verbatim record", "full record",
+                   "逐字稿", "全文", "完整记录", "会议全文",
+                   "transkrip", "transkrip penuh", "minit penuh"],
 }
 _SCALAR = {"title", "date", "duration", "language", "participants", "attendees"}
 _BLOCK = {"summary", "action_items", "decisions", "deadlines", "issues", "risks",
@@ -173,6 +189,24 @@ def _match_field(text: str, style_name: str = "", scalar_only: bool = False) -> 
 
 # --- value rendering ------------------------------------------------------
 
+def _series(ctx: dict) -> bool:
+    """True when the context spans a follow-up CHAIN rather than one meeting
+    (build_combined_context). A combined document carries an extra "Meeting"
+    column, or a bracketed prefix on a bullet, so a reader always sees which
+    session a row came from."""
+    return bool(ctx.get("combined"))
+
+
+def _tag(item: dict, combined: bool) -> str:
+    """A "[Session 1] " prefix for a bullet/inline item in a combined document."""
+    return f"[{item['meeting']}] " if combined and item.get("meeting") else ""
+
+
+def _cols(combined: bool, item: dict) -> list[str]:
+    """The optional leading "Meeting" cell of a combined document's table row."""
+    return [item.get("meeting") or "-"] if combined else []
+
+
 def _scalar_value(key: str, ctx: dict) -> str:
     m = ctx["meeting"]
     return {
@@ -188,23 +222,32 @@ def _scalar_value(key: str, ctx: dict) -> str:
 def _block_plaintext(key: str, ctx: dict) -> str:
     """A one-line text rendering, used when a block marker sits inline in a
     sentence or inside a table cell (where we can't insert a table/bullets)."""
+    combined = _series(ctx)
     if key == "summary":
         return ctx["summary"]
     if key == "action_items":
-        return "; ".join(a["description"] + (f" ({a['owner']})" if a.get("owner") else "")
+        return "; ".join(_tag(a, combined) + a["description"]
+                         + (f" ({a['owner']})" if a.get("owner") else "")
                          for a in ctx["action_items"]) or "None recorded."
     if key == "deadlines":
-        return "; ".join(d["description"] + (f" ({d['date']})" if d.get("date") else "")
+        return "; ".join(_tag(d, combined) + d["description"]
+                         + (f" ({d['date']})" if d.get("date") else "")
                          for d in ctx["deadlines"]) or "None recorded."
     if key in ("decisions", "issues"):
-        return "; ".join(i["description"] for i in ctx[key]) or "None recorded."
+        return "; ".join(_tag(i, combined) + i["description"]
+                         for i in ctx[key]) or "None recorded."
     if key == "risks":
-        return "; ".join(r["description"] + (f" (Mitigation: {r['mitigation']})" if r.get("mitigation") else "")
+        return "; ".join(_tag(r, combined) + r["description"]
+                         + (f" (Mitigation: {r['mitigation']})" if r.get("mitigation") else "")
                          for r in ctx["risks"]) or "None recorded."
     if key == "carry_forward":
-        return "; ".join(f"{c['description']} — {c['status']}"
+        return "; ".join(_tag(c, combined) + f"{c['description']} — {c['status']}"
                          for c in ctx["carry_forward"]) or "No previous meeting linked."
     if key == "transcript":
+        # A combined document pools no transcript (build_combined_context) -
+        # state that rather than resolving the marker to an empty string.
+        if combined:
+            return ctx.get("transcript_note", "")
         return " / ".join(f"[{s['time']}] {s['speaker']}: {s['text']}" for s in ctx["transcript"])
     return ""
 
@@ -245,11 +288,28 @@ def _delete_paragraph(paragraph: Paragraph) -> None:
 
 
 def _insert_field(doc, anchor: Paragraph, key: str, ctx: dict) -> None:
-    """Insert a field's content as block(s) right after `anchor`."""
+    """Insert a field's content as block(s) right after `anchor`.
+
+    A combined context (a whole follow-up chain) renders identically except
+    that every pooled row names the meeting it came from - an extra leading
+    column in a table, a "[Session 1]" prefix on a bullet.
+    """
+    combined = _series(ctx)
     if key in _SCALAR:
         _insert_paragraph_after(anchor, _scalar_value(key, ctx))
         return
     if key == "summary":
+        # A series keeps each meeting's summary under its own bold heading
+        # line, in chain order, rather than running them together into one
+        # paragraph no reader could attribute.
+        if combined and ctx.get("summaries"):
+            cur = anchor
+            for s in ctx["summaries"]:
+                cur = _insert_paragraph_after(cur, f"{s['title']}  ({s['date']})")
+                if cur.runs:
+                    cur.runs[0].bold = True
+                cur = _insert_paragraph_after(cur, s["text"])
+            return
         _insert_paragraph_after(anchor, ctx["summary"])
         return
     if key == "action_items":
@@ -257,21 +317,29 @@ def _insert_field(doc, anchor: Paragraph, key: str, ctx: dict) -> None:
         if not items:
             _insert_paragraph_after(anchor, "None recorded.", italic=True)
             return
-        rows = [[str(i),
-                 a["description"] + (f"  [{a['source']}]" if a.get("source") else ""),
+        rows = [[str(i)] + _cols(combined, a) +
+                [a["description"] + (f"  [{a['source']}]" if a.get("source") else ""),
                  a.get("owner") or "-", a.get("due") or "-"]
                 for i, a in enumerate(items, 1)]
-        _insert_table_after(doc, anchor, ["No.", "Action", "Owner", "Due"], rows)
+        _insert_table_after(
+            doc, anchor,
+            ["No."] + (["Meeting"] if combined else []) + ["Action", "Owner", "Due"],
+            rows,
+        )
         return
     if key == "deadlines":
         items = ctx["deadlines"]
         if not items:
             _insert_paragraph_after(anchor, "None recorded.", italic=True)
             return
-        rows = [[str(i),
-                 d["description"] + (f"  [{d['source']}]" if d.get("source") else ""),
+        rows = [[str(i)] + _cols(combined, d) +
+                [d["description"] + (f"  [{d['source']}]" if d.get("source") else ""),
                  d.get("date") or "-"] for i, d in enumerate(items, 1)]
-        _insert_table_after(doc, anchor, ["No.", "Deadline", "Date"], rows)
+        _insert_table_after(
+            doc, anchor,
+            ["No."] + (["Meeting"] if combined else []) + ["Deadline", "Date"],
+            rows,
+        )
         return
     if key == "carry_forward":
         items = ctx["carry_forward"]
@@ -280,12 +348,15 @@ def _insert_field(doc, anchor: Paragraph, key: str, ctx: dict) -> None:
                 anchor, "No previous meeting is linked to this one.", italic=True
             )
             return
-        rows = [[str(i),
-                 c["description"] + (f"  [{c['source']}]" if c.get("source") else ""),
+        rows = [[str(i)] + _cols(combined, c) +
+                [c["description"] + (f"  [{c['source']}]" if c.get("source") else ""),
                  c.get("owner") or "-", c["status"], c.get("note") or "-"]
                 for i, c in enumerate(items, 1)]
         _insert_table_after(
-            doc, anchor, ["No.", "Action agreed previously", "Owner", "Status", "Evidence"], rows
+            doc, anchor,
+            ["No."] + (["Reviewed in"] if combined else [])
+            + ["Action agreed previously", "Owner", "Status", "Evidence"],
+            rows,
         )
         return
     if key in ("decisions", "issues", "risks"):
@@ -295,7 +366,7 @@ def _insert_field(doc, anchor: Paragraph, key: str, ctx: dict) -> None:
             return
         cur = anchor
         for it in items:
-            line = "• " + it["description"]
+            line = "• " + _tag(it, combined) + it["description"]
             if it.get("source"):
                 line += f"  [{it['source']}]"
             if key == "risks" and it.get("mitigation"):
@@ -303,6 +374,11 @@ def _insert_field(doc, anchor: Paragraph, key: str, ctx: dict) -> None:
             cur = _insert_paragraph_after(cur, line)
         return
     if key == "transcript":
+        # A combined document deliberately pools no transcript - leaving the
+        # user's Transcript heading bare would read as a failure to fill it.
+        if combined:
+            _insert_paragraph_after(anchor, ctx.get("transcript_note", ""), italic=True)
+            return
         cur = anchor
         for seg in ctx["transcript"]:
             cur = _insert_paragraph_after(cur, f"[{seg['time']}] {seg['speaker']}: {seg['text']}")
@@ -400,14 +476,6 @@ def _fill_headings(doc, ctx: dict, filled: dict) -> None:
 
 # --- public API -----------------------------------------------------------
 
-def _all_paragraphs(doc):
-    yield from doc.paragraphs
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                yield from cell.paragraphs
-
-
 def recognised_fields(template_path: Path) -> list[str]:
     """Field keys the document references via a heading or a [[marker]]. Used to
     validate an upload has at least one fillable spot. Raises TemplateRenderError
@@ -447,7 +515,11 @@ def recognised_fields(template_path: Path) -> list[str]:
 
 def _data_fields(ctx: dict) -> list[str]:
     """Fields that actually have content worth placing (for the skipped report)."""
-    fields = ["title", "date", "duration", "language", "participants", "summary", "transcript"]
+    fields = ["title", "date", "duration", "language", "participants", "summary"]
+    # A combined document deliberately carries no pooled transcript, so a
+    # template without a Transcript heading is not "missing" anything.
+    if not _series(ctx):
+        fields.append("transcript")
     if ctx["attendees"]:
         fields.append("attendees")
     # carry_forward is listed only when this meeting IS a follow-up - otherwise
@@ -459,13 +531,30 @@ def _data_fields(ctx: dict) -> list[str]:
     return fields
 
 
-def fill_user_document(meeting_id: int, template_path: Path) -> tuple[Path, dict]:
-    """Fill the user's .docx with the meeting's data via markers + headings.
+def fill_user_document(
+    meeting_id: int,
+    template_path: Path,
+    *,
+    template_name: str | None = None,
+    combined: bool = False,
+) -> tuple[Path, dict]:
+    """Fill the user's .docx with a meeting's data via markers + headings.
+
+    `combined=True` fills it with the WHOLE follow-up chain ending at
+    `meeting_id` rather than that meeting alone, so an organisation's own
+    layout is kept for combined minutes as well as ordinary ones.
+
+    `template_name` is woven into the output filename. Without it a templated
+    export saved under exactly the same name as the built-in one, so a browser
+    kept the first download and named the second "... (1).docx" - opening the
+    familiar name showed the DEFAULT layout and the chosen template looked as
+    though it had been ignored.
 
     Returns (output_path, report) where report = {placed: {field: 'marker'|'heading'},
     skipped: [fields that had data but found no marker/heading]}.
     """
-    ctx = build_meeting_context(meeting_id)  # ValueError if missing / no transcript
+    # ValueError if the meeting is missing or has no transcript yet.
+    ctx = build_combined_context(meeting_id) if combined else build_meeting_context(meeting_id)
     try:
         doc = Document(str(template_path))
     except Exception as exc:  # noqa: BLE001
@@ -483,6 +572,10 @@ def fill_user_document(meeting_id: int, template_path: Path) -> tuple[Path, dict
 
     out_dir = settings.output_dir / str(meeting_id)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{_slug(ctx['meeting']['title'])}_minutes.docx"
+    out_path = out_dir / output_filename(
+        ctx.get("file_title") or ctx["meeting"]["title"],
+        combined=combined,
+        template_name=template_name,
+    )
     doc.save(str(out_path))
     return out_path, {"placed": filled, "skipped": skipped}
