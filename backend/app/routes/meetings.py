@@ -48,6 +48,7 @@ from app.schemas import (
 )
 from app.schemas.insights import (
     CarryForwardItemResponse,
+    CarryForwardItemUpdate,
     CarryForwardResponse,
     FollowUpUpdate,
     InsightItemResponse,
@@ -564,6 +565,77 @@ def rerun_carry_forward(
 
     background_tasks.add_task(carry_forward_safe, meeting_id)
     return MeetingResponse.model_validate(dict(updated))
+
+
+# The five verdicts a carry-forward row may hold. A human may set any of them -
+# including 'not_discussed', which the model itself is never trusted to return
+# (see pipeline/carryforward.py) but a person may legitimately conclude.
+_CF_STATUSES = {"completed", "in_progress", "blocked", "changed", "not_discussed"}
+_CF_COLS = ("description", "owner", "status", "note")
+
+
+@router.patch(
+    "/{meeting_id}/carry-forward/{item_id}", response_model=CarryForwardItemResponse
+)
+def update_carry_forward_item(
+    meeting_id: int, item_id: int, body: CarryForwardItemUpdate
+) -> CarryForwardItemResponse:
+    """Correct one carry-forward verdict by hand.
+
+    The counterpart of PATCH /insights/{category}/{item_id}: the follow-up
+    verdicts are model judgements over a small evidence set, so the minute-taker
+    needs the same power to overrule them that they already have over insights.
+    Re-running the analysis replaces every row, so corrections made here are
+    discarded by a later re-run - which is why the button warns about it.
+    """
+    fields = {
+        k: v for k, v in body.model_dump(exclude_unset=True).items() if k in _CF_COLS
+    }
+    if not fields:
+        raise HTTPException(400, "Nothing to update for this item")
+    if "description" in fields and not (fields["description"] or "").strip():
+        raise HTTPException(400, "Description cannot be empty")
+    if "status" in fields:
+        status = (fields["status"] or "").strip().lower().replace(" ", "_")
+        if status not in _CF_STATUSES:
+            raise HTTPException(
+                400,
+                "status must be one of: " + ", ".join(sorted(_CF_STATUSES)),
+            )
+        fields["status"] = status
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM carry_forward WHERE id = ? AND meeting_id = ?",
+            (item_id, meeting_id),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(
+                404, f"Carry-forward item {item_id} not in meeting {meeting_id}"
+            )
+        assignments = ", ".join(f"{k} = ?" for k in fields)
+        conn.execute(
+            f"UPDATE carry_forward SET {assignments} WHERE id = ?",
+            (*fields.values(), item_id),
+        )
+        updated = conn.execute(
+            "SELECT * FROM carry_forward WHERE id = ?", (item_id,)
+        ).fetchone()
+    return CarryForwardItemResponse.model_validate(dict(updated))
+
+
+@router.delete("/{meeting_id}/carry-forward/{item_id}", status_code=204)
+def delete_carry_forward_item(meeting_id: int, item_id: int) -> None:
+    """Drop one carry-forward row - e.g. an action that is no longer relevant,
+    or a verdict the minute-taker does not want in the circulated minutes."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "DELETE FROM carry_forward WHERE id = ? AND meeting_id = ?",
+            (item_id, meeting_id),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(
+                404, f"Carry-forward item {item_id} not in meeting {meeting_id}"
+            )
 
 
 def _resolve_template(template_id: int) -> tuple[Path, str]:

@@ -306,6 +306,33 @@ export async function rerunCarryForward(meetingId: number): Promise<void> {
   await check(await fetch(`${API}/meetings/${meetingId}/carry-forward`, { method: "POST" }));
 }
 
+/** Correct one carry-forward verdict by hand (human-in-the-loop). */
+export async function updateCarryForwardItem(
+  meetingId: number,
+  itemId: number,
+  body: Partial<Pick<CarryForwardItem, "description" | "owner" | "status" | "note">>,
+): Promise<CarryForwardItem> {
+  return (
+    await check(
+      await fetch(`${API}/meetings/${meetingId}/carry-forward/${itemId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    )
+  ).json();
+}
+
+/** Drop one carry-forward row from this meeting's follow-up list. */
+export async function deleteCarryForwardItem(
+  meetingId: number,
+  itemId: number,
+): Promise<void> {
+  await check(
+    await fetch(`${API}/meetings/${meetingId}/carry-forward/${itemId}`, { method: "DELETE" }),
+  );
+}
+
 export const audioUrl = (meetingId: number) => `${API}/meetings/${meetingId}/audio`;
 const templateQuery = (templateId?: number | null) =>
   templateId ? `?template_id=${templateId}` : "";

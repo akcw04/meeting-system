@@ -410,6 +410,15 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-soft
 .followup-meta .jump { color: var(--accent); cursor: pointer; }
 .followup-meta .jump:hover { text-decoration: underline; }
 
+/* Inline verdict editor on a carry-forward row. The panel-wide rule above makes
+   every <select> full width, which is right for the "follows up on" picker but
+   wrong for a small label+dropdown pair, so it is overridden here. */
+.followup-edit-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.followup-edit-row label { font-size: 11px; color: var(--muted); }
+.followup .followup-edit-row select { width: auto; margin-bottom: 0; flex: 1; }
+/* the note is one line, not a textarea, so it does not need the textarea height */
+.followup-note-edit { min-height: 0; }
+
 /* Verdict pills. 'Not discussed' is deliberately the quietest: it is the
    system reporting an absence of evidence, not a finding about the work. */
 .cf-pill {

@@ -1,15 +1,18 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CARRY_FORWARD_LABELS,
+  deleteCarryForwardItem,
   getCarryForward,
   listMeetings,
   rerunCarryForward,
   setFollowUp,
   statusInfo,
+  updateCarryForwardItem,
   type CarryForwardItem,
   type Meeting,
 } from "../api/client";
+import ConfirmDialog from "./ConfirmDialog";
 
 /** Zone ⑤ — "what happened to what we agreed last time?"
  *
@@ -50,6 +53,12 @@ export default function FollowUpPanel({
     onSuccess: () => qc.invalidateQueries({ queryKey: ["carry-forward", meetingId] }),
   });
 
+  // Re-checking replaces every carry-forward row, including any verdict the user
+  // has corrected by hand, so it is confirmed in-app exactly as regenerating the
+  // insights is. The "Try again" button on the failed banner is deliberately NOT
+  // confirmed: a failed run left nothing to lose.
+  const [confirmingRerun, setConfirmingRerun] = useState(false);
+
   // Only meetings that already HAVE a transcript can be followed up, and a
   // meeting can never follow itself. Newest first — a follow-up almost always
   // points at something recent.
@@ -81,6 +90,7 @@ export default function FollowUpPanel({
       <p className="panel-intro">
         Link the earlier meeting this one follows. The system then reads this transcript for
         what happened to everything agreed there, and you can export both as one document.
+        You can <b>edit</b> or <b>delete</b> any verdict before exporting.
       </p>
 
       <label className="followup-label" htmlFor="followup-select">
@@ -129,17 +139,31 @@ export default function FollowUpPanel({
         <>
           <ul className="followup-list">
             {items.map((it) => (
-              <CarryForwardRow key={it.id} item={it} onJump={onJumpToSegment} />
+              <CarryForwardRow key={it.id} meetingId={meetingId} item={it} onJump={onJumpToSegment} />
             ))}
           </ul>
-          <button
-            className="ghost small"
-            onClick={() => rerun.mutate()}
-            disabled={rerun.isPending || analysing}
-            title="Re-check this meeting against the earlier one — use after correcting the transcript"
-          >
-            {rerun.isPending ? "Re-checking…" : "Re-check progress"}
-          </button>
+          <div style={{ marginTop: 8 }}>
+            <button
+              className="small"
+              disabled={rerun.isPending || analysing}
+              onClick={() => setConfirmingRerun(true)}
+            >
+              {rerun.isPending ? "Re-checking…" : "Re-check progress"}
+            </button>
+            {rerun.isError && (
+              <div className="empty-note" style={{ color: "var(--danger)" }}>
+                Couldn't start the re-check: {(rerun.error as Error).message}
+              </div>
+            )}
+          </div>
+          <ConfirmDialog
+            open={confirmingRerun}
+            title="Re-check progress?"
+            message="Every carried-forward verdict is discarded and worked out again from this meeting's transcript. Any verdict or note you corrected by hand is lost."
+            confirmLabel="Re-check"
+            onConfirm={() => { setConfirmingRerun(false); rerun.mutate(); }}
+            onCancel={() => setConfirmingRerun(false)}
+          />
         </>
       )}
     </div>
@@ -147,12 +171,97 @@ export default function FollowUpPanel({
 }
 
 function CarryForwardRow({
+  meetingId,
   item,
   onJump,
 }: {
+  meetingId: number;
   item: CarryForwardItem;
   onJump: (segmentId: number) => void;
 }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(item.description);
+  const [draftStatus, setDraftStatus] = useState(item.status);
+  const [draftNote, setDraftNote] = useState(item.note ?? "");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  const reset = () => {
+    setDraft(item.description);
+    setDraftStatus(item.status);
+    setDraftNote(item.note ?? "");
+    setEditing(false);
+  };
+
+  const save = useMutation({
+    mutationFn: () =>
+      updateCarryForwardItem(meetingId, item.id, {
+        description: draft.trim(),
+        status: draftStatus,
+        note: draftNote.trim() || null,
+      }),
+    onSuccess: () => {
+      setEditing(false);
+      qc.invalidateQueries({ queryKey: ["carry-forward", meetingId] });
+    },
+  });
+
+  const del = useMutation({
+    mutationFn: () => deleteCarryForwardItem(meetingId, item.id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["carry-forward", meetingId] }),
+  });
+
+  if (editing) {
+    return (
+      <li className="followup-item">
+        <textarea
+          className="insight-edit"
+          value={draft}
+          autoFocus
+          rows={2}
+          aria-label="Edit the action wording"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Escape") reset(); }}
+        />
+        <div className="followup-edit-row">
+          <label htmlFor={`cf-status-${item.id}`}>Verdict</label>
+          <select
+            id={`cf-status-${item.id}`}
+            value={draftStatus}
+            onChange={(e) => setDraftStatus(e.target.value)}
+          >
+            {Object.entries(CARRY_FORWARD_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </div>
+        <input
+          className="insight-edit followup-note-edit"
+          value={draftNote}
+          aria-label="Evidence note"
+          placeholder="Note — why this verdict (optional)"
+          onChange={(e) => setDraftNote(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Escape") reset(); }}
+        />
+        <div className="insight-actions">
+          <button
+            className="small"
+            disabled={!draft.trim() || save.isPending}
+            onClick={() => save.mutate()}
+          >
+            {save.isPending ? "Saving…" : "Save"}
+          </button>
+          <button className="ghost small" onClick={reset}>Cancel</button>
+        </div>
+        {save.isError && (
+          <div className="empty-note" style={{ color: "var(--danger)" }}>
+            Save failed: {(save.error as Error).message}
+          </div>
+        )}
+      </li>
+    );
+  }
+
   const label = CARRY_FORWARD_LABELS[item.status] ?? item.status;
   return (
     <li className="followup-item">
@@ -185,6 +294,28 @@ function CarryForwardRow({
           )
         )}
       </div>
+      <div className="insight-actions">
+        <button className="linkbtn" onClick={() => setEditing(true)}>✎ Edit</button>
+        <button
+          className="linkbtn danger"
+          disabled={del.isPending}
+          onClick={() => setConfirmingDelete(true)}
+        >
+          {del.isPending ? "Deleting…" : "🗑 Delete"}
+        </button>
+      </div>
+      <ConfirmDialog
+        open={confirmingDelete}
+        title="Remove this carried-forward item?"
+        message="It disappears from the follow-up list and the combined export. Re-checking progress brings it back."
+        onConfirm={() => { setConfirmingDelete(false); del.mutate(); }}
+        onCancel={() => setConfirmingDelete(false)}
+      />
+      {del.isError && (
+        <div className="empty-note" style={{ color: "var(--danger)" }}>
+          Delete failed: {(del.error as Error).message}
+        </div>
+      )}
     </li>
   );
 }

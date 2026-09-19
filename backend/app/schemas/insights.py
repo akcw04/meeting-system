@@ -206,3 +206,23 @@ class InsightItemUpdate(BaseModel):
     target_date: str | None = None
     severity: str | None = None
     mitigation: str | None = None
+
+
+class CarryForwardItemUpdate(BaseModel):
+    """User correction to one carry-forward verdict (human-in-the-loop).
+
+    The verdicts are the least reliable part of the generated minutes - Section
+    6.2.4 of the report asks the minute-taker to confirm every one - so this is
+    how they confirm it: fix the wording, reassign the owner, overrule the
+    status, or rewrite the evidence note. All fields optional; only the ones
+    supplied are written. `status`, when given, must be one of the five verdicts
+    (validated in the route).
+
+    The model's citation (`source_segment_id`) is deliberately left untouched by
+    an edit: it records what the MODEL was shown, which stays true whatever the
+    human concludes, and the note is the place to say why they disagreed.
+    """
+    description: str | None = None
+    owner: str | None = None
+    status: str | None = None
+    note: str | None = None
