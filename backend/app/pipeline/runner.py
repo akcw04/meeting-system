@@ -36,7 +36,6 @@ from app.pipeline.diarize import (
     split_segments_by_speaker,
 )
 from app.pipeline.transcribe import (
-    SUPPORTED_LANGUAGES,
     detect_languages,
     languages_in_segments,
     transcribe,
@@ -110,13 +109,6 @@ def run_pipeline(meeting_id: int, original_path: Path) -> None:
         # the ASR engine - see DECISIONS.md.)
 
         # === Stage C: transcription (Whisper) ===
-        with get_conn() as conn:
-            row = conn.execute(
-                "SELECT primary_language FROM meetings WHERE id = ?",
-                (meeting_id,),
-            ).fetchone()
-        primary = (row["primary_language"] if row else "auto") or "auto"
-
         # Detect the spoken languages up front so we can spot code-switched
         # recordings - English, Mandarin and Bahasa Melayu in any combination,
         # the Malaysian meeting case. Cheap: only a few short windows are
@@ -126,10 +118,10 @@ def run_pipeline(meeting_id: int, original_path: Path) -> None:
         dominant = max(langs_present, key=detected.count) if detected else "en"
         is_mixed = len(langs_present) >= 2
 
-        # The user's preferred language for the OUTPUT (summary, insights, Word
-        # doc); 'auto' falls back to the dominant detected language. The
-        # TRANSCRIPT itself is always kept as-spoken (see below).
-        preferred = primary if primary in SUPPORTED_LANGUAGES else dominant
+        # NOTE: `primary_language` (the user's OUTPUT choice) is deliberately NOT
+        # consulted here. It governs the summary, insights and Word document
+        # only, and the categorization stage reads it back from the database
+        # itself. The transcript is always produced in the language spoken.
 
         _set_status(meeting_id, "transcribing")
         _set_progress(meeting_id, 0.0)
@@ -138,7 +130,8 @@ def run_pipeline(meeting_id: int, original_path: Path) -> None:
         # is transcribed per-language (each part stays in its own language); a
         # single-language recording uses the fast one-pass path. The single-
         # language OUTPUT (summary / insights / Word doc) is produced downstream by
-        # the LLM, which reads the mixed transcript and writes in `preferred`.
+        # the LLM, which reads the transcript and writes in the user's chosen
+        # `primary_language`.
         if is_mixed:
             segments, detected_lang = transcribe_codeswitch(
                 audio_wav,
@@ -146,9 +139,19 @@ def run_pipeline(meeting_id: int, original_path: Path) -> None:
                 progress_callback=_throttled_progress(meeting_id, duration),
             )
         else:
+            # Transcribe in the language actually SPOKEN, not the one the user
+            # picked for the output. `primary_language` is an OUTPUT control -
+            # its own tooltip says "the single language your summary, insights
+            # and Word document will be in" - and categorization reads it back
+            # from the database on its own. Passing it here forced the ASR too:
+            # a pure Malay recording uploaded with the form's default "English"
+            # was transcribed as English, which labelled every segment 'en',
+            # produced coarse 30-second segments and machine-translated part of
+            # the meeting. Using `dominant` restores the stated transcript
+            # policy above: show the original as-spoken words.
             segments, detected_lang = transcribe(
                 audio_wav,
-                language=preferred,
+                language=dominant,
                 task="transcribe",
                 progress_callback=_throttled_progress(meeting_id, duration),
             )

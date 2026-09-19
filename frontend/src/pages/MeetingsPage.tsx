@@ -6,6 +6,7 @@ import {
   listMeetings,
   statusInfo,
   uploadMeeting,
+  localDateTime,
   type Meeting,
 } from "../api/client";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -226,7 +227,7 @@ export default function MeetingsPage({ onOpen }: { onOpen: (id: number) => void 
                   <div className="meta">
                     {m.original_filename}
                     {m.duration_seconds ? ` · ${fmtTime(m.duration_seconds)}` : ""}
-                    {` · uploaded ${m.created_at.slice(0, 16).replace("T", " ")}`}
+                    {` · uploaded ${localDateTime(m.created_at)}`}
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

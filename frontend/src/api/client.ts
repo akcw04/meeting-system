@@ -333,6 +333,39 @@ export async function deleteCarryForwardItem(
   );
 }
 
+/** Render a stored timestamp in the viewer's own timezone.
+ *
+ * SQLite's CURRENT_TIMESTAMP is UTC and is stored with no zone marker
+ * ("2026-09-19 10:20:46"). Slicing that string straight into the UI showed
+ * every meeting eight hours early in Malaysia (UTC+8) - and `new Date(...)`
+ * would not have helped, because browsers read a space-separated, unmarked
+ * timestamp as LOCAL time. Tagging it "Z" first is what makes it correct.
+ */
+function asUtcDate(stored: string): Date | null {
+  if (!stored) return null;
+  const text = stored.trim().replace(" ", "T");
+  const iso = /[Zz]|[+-]\d{2}:?\d{2}$/.test(text) ? text : `${text}Z`;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** "2026-09-19 18:20" in local time, for timestamps shown beside a meeting. */
+export function localDateTime(stored: string): string {
+  const d = asUtcDate(stored);
+  if (!d) return stored.slice(0, 16).replace("T", " ");
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+         `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** "2026-09-19" in local time - the date can differ from the UTC one. */
+export function localDate(stored: string): string {
+  const d = asUtcDate(stored);
+  if (!d) return stored.slice(0, 10);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 export const audioUrl = (meetingId: number) => `${API}/meetings/${meetingId}/audio`;
 const templateQuery = (templateId?: number | null) =>
   templateId ? `?template_id=${templateId}` : "";

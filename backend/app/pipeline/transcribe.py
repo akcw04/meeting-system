@@ -227,6 +227,61 @@ def transcribe(
     return out, output_lang
 
 
+# Languages whose script is NOT Latin. Chinese is the only one among
+# SUPPORTED_LANGUAGES; the rest (English, Malay/Indonesian) share the alphabet.
+_NON_LATIN_SCRIPT = frozenset({"zh"})
+
+# A same-script minority language must cover at least this share of the
+# recording's segments before it earns a pass of its own.
+_MIN_SAME_SCRIPT_SHARE = 0.10
+_MIN_SAME_SCRIPT_SEGMENTS = 3
+
+
+def _shares_script(lang: str, dominant: str) -> bool:
+    """True when `lang` is written in the same script as `dominant`."""
+    return (lang in _NON_LATIN_SCRIPT) == (dominant in _NON_LATIN_SCRIPT)
+
+
+def _drop_uncorroborated(
+    minority_by_lang: dict[str, list[int]], dominant: str, total_segments: int
+) -> dict[str, list[int]]:
+    """Drop minority languages that share the dominant script and are barely present.
+
+    Per-segment detection cannot tell a short utterance apart from another
+    language written in the same alphabet. Measured on the EN-ZH test recording:
+    the two words "Around 8,000" scored 0.834 as Malay - a HIGHER confidence and
+    a wider margin over the runner-up than the genuinely Mandarin line in the
+    same file (0.703). No confidence threshold can separate those two cases, so
+    tuning the 0.55 gate cannot fix it.
+
+    What does separate them is corroboration across the whole recording. On the
+    genuinely trilingual test recordings Malay ran 17.8% and 19.5% of segments;
+    the false positive ran 5.9%. A language sharing the dominant's script must
+    therefore clear a share AND a count bar before it earns a full pass.
+
+    A different-script language is exempt: Chinese inside an English meeting is
+    proved by the characters it is written in, which is why two Mandarin
+    segments out of thirty-four are believed while two Malay ones are not.
+    """
+    if total_segments <= 0:
+        return minority_by_lang
+    kept: dict[str, list[int]] = {}
+    for lang, idx in minority_by_lang.items():
+        if not _shares_script(lang, dominant):
+            kept[lang] = idx
+            continue
+        share = len(idx) / total_segments
+        if len(idx) >= _MIN_SAME_SCRIPT_SEGMENTS and share >= _MIN_SAME_SCRIPT_SHARE:
+            kept[lang] = idx
+        else:
+            print(
+                f"[codeswitch] ignoring '{lang}': {len(idx)}/{total_segments} "
+                f"segments ({share:.1%}) is too little corroboration for a "
+                f"language sharing the '{dominant}' script"
+            )
+    return kept
+
+
 def transcribe_codeswitch(
     audio_path: Path,
     dominant: str,
@@ -298,6 +353,8 @@ def transcribe_codeswitch(
     except Exception as exc:  # best-effort; fall back to the dominant-only pass
         print(f"[codeswitch] language detection skipped ({type(exc).__name__}: {exc})")
         return segments, dominant
+
+    minority_by_lang = _drop_uncorroborated(minority_by_lang, dominant, len(segments))
 
     if not minority_by_lang:
         return segments, dominant

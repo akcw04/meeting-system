@@ -9,6 +9,7 @@ import {
   setFollowUp,
   statusInfo,
   updateCarryForwardItem,
+  localDate,
   type CarryForwardItem,
   type Meeting,
 } from "../api/client";
@@ -105,7 +106,7 @@ export default function FollowUpPanel({
         <option value="">No — this meeting stands alone</option>
         {candidates.map((m) => (
           <option key={m.id} value={m.id}>
-            {m.title} ({m.created_at.slice(0, 10)})
+            {m.title} ({localDate(m.created_at)})
           </option>
         ))}
       </select>

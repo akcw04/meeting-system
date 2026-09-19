@@ -6,6 +6,7 @@ import {
   starterTemplateUrl,
   templateDownloadUrl,
   uploadTemplate,
+  localDateTime,
   type Template,
 } from "../api/client";
 import { useCollapse } from "../components/useCollapse";
@@ -152,7 +153,7 @@ export default function TemplatesPage() {
               <div>
                 <div className="title">{t.name}</div>
                 <div className="meta">
-                  {t.original_filename} · added {t.created_at.slice(0, 16).replace("T", " ")}
+                  {t.original_filename} · added {localDateTime(t.created_at)}
                 </div>
               </div>
               <div className="card-actions">

@@ -22,7 +22,7 @@ Re-rendered on every export request so transcript/insight edits are reflected.
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from docx import Document
@@ -80,6 +80,29 @@ def output_filename(
             suffix = suffix.rsplit("_", 1)[0]
     parts = [_slug(title), "combined" if combined else "", "minutes", suffix]
     return "_".join(p for p in parts if p) + ".docx"
+
+
+
+def local_date(stored: str | None) -> str:
+    """The calendar date of a stored timestamp, in the machine's own timezone.
+
+    SQLite's CURRENT_TIMESTAMP is UTC and is stored WITHOUT a zone marker
+    ("2026-09-19 10:20:46"). Slicing the first ten characters therefore yields
+    the UTC date, which is a day early for any meeting uploaded before the
+    UTC offset (before 08:00 in Malaysia, UTC+8) - putting the wrong date on
+    minutes that get circulated. Convert first, then take the date.
+
+    Falls back to the raw first ten characters if the value is missing or in an
+    unexpected shape, so an export never fails over a timestamp.
+    """
+    if not stored:
+        return ""
+    text = str(stored).strip().replace("T", " ").removesuffix("Z")
+    try:
+        naive = datetime.strptime(text[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return str(stored)[:10]
+    return naive.replace(tzinfo=timezone.utc).astimezone().strftime("%Y-%m-%d")
 
 
 def build_meeting_context(meeting_id: int) -> dict:
@@ -150,7 +173,7 @@ def build_meeting_context(meeting_id: int) -> dict:
     return {
         "meeting": {
             "title": meeting["title"],
-            "date": (meeting["created_at"] or "")[:10],
+            "date": local_date(meeting["created_at"]),
             "duration": _fmt_time(meeting["duration_seconds"]),
             "language_name": LANGUAGE_NAMES.get(meeting["language"], meeting["language"] or "-"),
             "speaker_count": len(speakers),
