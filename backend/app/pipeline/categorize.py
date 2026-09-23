@@ -4,14 +4,15 @@ Map-reduce over the transcript:
 
   MAP    Split the diarized transcript into ~4500-token chunks. For each
          chunk, ask Llama to extract action items, decisions, deadlines,
-         issues, risks + a 2-4 sentence chunk summary. The reply is requested
-         as JSON (Ollama `format=json`, shaped by the prompt) and validated
-         against ChunkInsights - full-schema-constrained decoding was ~10x
-         slower on this 6 GB setup (see docs/BUGS.md #25).
+         issues, risks + a 3-5 sentence chunk summary (which becomes the
+         meeting summary verbatim when the transcript fits in one chunk).
+         The reply is requested as JSON (Ollama `format=json`, shaped by the
+         prompt) and validated against ChunkInsights - full-schema-constrained
+         decoding was ~10x slower on this 6 GB setup (see docs/BUGS.md #25).
 
   REDUCE If there was more than one chunk, send all collected items +
          chunk summaries through one consolidation call that dedupes
-         overlapping items and writes the final <=300-word summary
+         overlapping items and writes the final 80-300 word summary
          (MeetingInsights schema).
 
 Anti-hallucination grounding:
@@ -226,8 +227,12 @@ def _extraction_system_prompt(language: str) -> str:
         "yet'; 'expected traffic is ~8,000 but only 5,000 were tested'). When a problem "
         "is framed as a future or possible consequence, it is a RISK, not an issue.\n"
         "- The same underlying fact may legitimately appear in more than one category.\n"
-        "- chunk_summary MUST be 2-4 complete sentences (40+ words) describing the "
-        "discussion's topics and outcomes - never a title or fragment.\n\n"
+        "- chunk_summary MUST be 3-5 complete sentences (60+ words) describing the "
+        "discussion's topics and outcomes - never a title or fragment. Name the actual "
+        "decisions, dates, owners and numbers that were discussed; do NOT write "
+        "generically ('several decisions were made about the launch date'). Base it only "
+        "on the transcript above - if there is genuinely little content, write less "
+        "rather than inventing detail.\n\n"
         "Return ONLY a JSON object with EXACTLY these keys. Keep the keys in English "
         "exactly as shown; write all string VALUES in "
         f"{language}. No markdown, no commentary:\n"
@@ -237,11 +242,11 @@ def _extraction_system_prompt(language: str) -> str:
         '  "deadlines": [{"description": "...", "date": "date or null", "source_segment_ids": [12]}],\n'
         '  "issues": [{"description": "...", "source_segment_ids": [12]}],\n'
         '  "risks": [{"description": "...", "mitigation": "... or null", "source_segment_ids": [12]}],\n'
-        '  "chunk_summary": "WRITE THIS LAST: 2-4 sentences (40+ words) summarising the discussion above. NEVER leave empty."\n'
+        '  "chunk_summary": "WRITE THIS LAST: 3-5 sentences (60+ words) summarising the discussion above, naming the specific decisions, dates and numbers. NEVER leave empty."\n'
         '}\n'
         "Use [] for any category with nothing found. Every list item MUST include "
         "source_segment_ids citing the [seg N] numbers from the transcript. "
-        "chunk_summary must always be a non-empty 2-4 sentence paragraph."
+        "chunk_summary must always be a non-empty 3-5 sentence paragraph."
     )
 
 
@@ -251,9 +256,12 @@ def _summary_system_prompt(language: str) -> str:
         "The user gives you section summaries from sequential chunks of ONE meeting, "
         "plus the key extracted items.\n"
         f"- Write the summary in {language}.\n"
-        "- 300 words or less; complete sentences; one coherent narrative covering the "
-        "meeting's purpose, main topics, decisions, and outcomes.\n"
-        "- Base it ONLY on the provided material - do not invent anything.\n"
+        "- Between 80 and 300 words; complete sentences; one coherent narrative covering "
+        "the meeting's purpose, main topics, decisions, and outcomes.\n"
+        "- Name the actual decisions, dates, owners and numbers from the material; do NOT "
+        "write generically ('several decisions were made about the launch date').\n"
+        "- Base it ONLY on the provided material - do not invent anything. If the material "
+        "is genuinely thin, write less rather than padding it out.\n"
         'Return ONLY a JSON object: {"summary": "..."} with the summary text in '
         f"{language}. No markdown, no other keys."
     )

@@ -48,7 +48,16 @@ export default function InsightsPanel({
     meetingStatus === "diarized" ||
     meetingStatus === "ready" || // allow re-running (e.g. after editing the transcript)
     meetingStatus.startsWith("categorize_failed");
-  const generating = meetingStatus === "categorizing" || categorize.isPending;
+  // The pipeline replaces the whole insight set in ONE transaction at the very end
+  // of the run (runner.categorize_step), so until it lands the database still holds
+  // the PREVIOUS summary and items. Showing them during a run made a stale set look
+  // like the new one - and let the user edit rows that were about to be deleted.
+  // Treat a run reported by either query as "generating" and hide the old set
+  // until the new one is written.
+  const generating =
+    meetingStatus === "categorizing" ||
+    categorize.isPending ||
+    insights.data?.status === "categorizing";
   const buttonLabel = meetingStatus.startsWith("categorize_failed")
     ? "Retry insight extraction"
     : meetingStatus === "ready"
@@ -64,14 +73,16 @@ export default function InsightsPanel({
         You can <b>edit</b> or <b>delete</b> any item, or regenerate the whole set.
       </p>
       <h2>Meeting Summary</h2>
-      {data?.summary ? (
+      {generating ? (
+        <div className="empty-note">
+          Extracting insights with the local AI model on your machine — this can take several
+          minutes (longer for long meetings)…
+          {data?.summary && " The previous summary and items stay saved until the new set replaces them."}
+        </div>
+      ) : data?.summary ? (
         <div className="summary">{data.summary}</div>
       ) : (
-        <div className="empty-note">
-          {generating
-            ? "Extracting insights with the local AI model on your machine — this can take several minutes (longer for long meetings)…"
-            : "No insights yet."}
-        </div>
+        <div className="empty-note">No insights yet.</div>
       )}
       {canGenerate && (
         <div style={{ marginTop: 8 }}>
@@ -101,45 +112,51 @@ export default function InsightsPanel({
         onCancel={() => setConfirmingRegen(false)}
       />
 
-      <Category title="Action Items" category="action_items" meetingId={meetingId}
-        items={data?.action_items} onJump={onJumpToSegment}
-        render={(it) => (
-          <>
-            {it.description}
-            <div className="meta">
-              {it.owner ? `Owner: ${it.owner}` : ""}
-              {it.owner && it.due_date ? " · " : ""}
-              {it.due_date ? `Due: ${it.due_date}` : ""}
-            </div>
-          </>
-        )}
-      />
-      <Category title="Key Decisions" category="decisions" meetingId={meetingId}
-        items={data?.decisions} onJump={onJumpToSegment}
-        render={(it) => it.description}
-      />
-      <Category title="Deadlines" category="deadlines" meetingId={meetingId}
-        items={data?.deadlines} onJump={onJumpToSegment}
-        render={(it) => (
-          <>
-            {it.description}
-            {it.target_date && <div className="meta">Date: {it.target_date}</div>}
-          </>
-        )}
-      />
-      <Category title="Technical Issues" category="issues" meetingId={meetingId}
-        items={data?.issues} onJump={onJumpToSegment}
-        render={(it) => it.description}
-      />
-      <Category title="Risks" category="risks" meetingId={meetingId}
-        items={data?.risks} onJump={onJumpToSegment}
-        render={(it) => (
-          <>
-            {it.description}
-            {it.mitigation && <div className="meta">Mitigation: {it.mitigation}</div>}
-          </>
-        )}
-      />
+      {/* Hidden while a run is in flight: these rows would still be the PREVIOUS
+        set, and editing one would lose the edit when the new set replaces it. */}
+      {!generating && (
+        <>
+          <Category title="Action Items" category="action_items" meetingId={meetingId}
+            items={data?.action_items} onJump={onJumpToSegment}
+            render={(it) => (
+              <>
+                {it.description}
+                <div className="meta">
+                  {it.owner ? `Owner: ${it.owner}` : ""}
+                  {it.owner && it.due_date ? " · " : ""}
+                  {it.due_date ? `Due: ${it.due_date}` : ""}
+                </div>
+              </>
+            )}
+          />
+          <Category title="Key Decisions" category="decisions" meetingId={meetingId}
+            items={data?.decisions} onJump={onJumpToSegment}
+            render={(it) => it.description}
+          />
+          <Category title="Deadlines" category="deadlines" meetingId={meetingId}
+            items={data?.deadlines} onJump={onJumpToSegment}
+            render={(it) => (
+              <>
+                {it.description}
+                {it.target_date && <div className="meta">Date: {it.target_date}</div>}
+              </>
+            )}
+          />
+          <Category title="Technical Issues" category="issues" meetingId={meetingId}
+            items={data?.issues} onJump={onJumpToSegment}
+            render={(it) => it.description}
+          />
+          <Category title="Risks" category="risks" meetingId={meetingId}
+            items={data?.risks} onJump={onJumpToSegment}
+            render={(it) => (
+              <>
+                {it.description}
+                {it.mitigation && <div className="meta">Mitigation: {it.mitigation}</div>}
+              </>
+            )}
+          />
+        </>
+      )}
     </div>
   );
 }
