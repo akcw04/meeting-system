@@ -61,12 +61,15 @@ bash run.sh        # every time
 | To | Do this |
 |---|---|
 | **Start** | Double-click `Kairos.bat`, the desktop icon, or the Start Menu **Kairos** shortcut — all three do the same thing |
-| **Open the interface** | Go to **http://localhost:5173** in your browser |
-| **Stop** | Close the two black server windows |
+| **Open the interface** | It opens in your browser automatically once Kairos is ready. If it doesn't, go to **http://localhost:5173** |
+| **Stop** | Press **Enter** in the Kairos window, or simply close that window |
 
-Two windows appear when Kairos starts — **BACKEND** (the API, port 8000) and
-**FRONTEND** (the web interface, port 5173). Both must stay open while you work. Wait
-until the FRONTEND window prints `ready` before opening the browser.
+One window appears when Kairos starts. It reports each part as it comes up (the AI
+pipeline service on port 8000 and the web interface on port 5173, both running hidden),
+prints the system's start-up banner, and then opens the browser. Leave the window open
+while you work: closing it stops Kairos. Server output is written to `logs/`.
+`run.ps1 -Stop` stops a running copy, and `run.ps1 -NoBrowser` starts without opening
+the browser. On macOS or Linux, `run.sh` does the same and stops with **Ctrl+C**.
 
 > Use `localhost`, not `127.0.0.1` — the web interface is served on IPv6 localhost.
 
@@ -83,7 +86,7 @@ until the FRONTEND window prints `ready` before opening the browser.
 | Ollama | Runs the local language model |
 | Free Hugging Face account | One-time, for the speaker-identification models |
 | ~40 GB free disk | Models and dependencies are large |
-| NVIDIA GPU, 6 GB+ VRAM | Strongly recommended — roughly 10× faster than CPU. Without one, Kairos automatically switches to CPU mode and still works, just slower. |
+| NVIDIA GPU, 6 GB+ VRAM | Strongly recommended — transcription is much faster on the GPU. Without one, setup installs the CPU build and switches Kairos to CPU mode; everything still works, just more slowly. |
 
 On a first run `Kairos.bat` checks for all of these, installs what it can, and prints a
 clear list of anything you must install yourself.
@@ -121,18 +124,27 @@ Kairos/
 │   │   ├── pipeline/       Audio → transcript → speakers → insights → export
 │   │   ├── routes/         HTTP endpoints
 │   │   └── schemas/        Request/response models
-│   ├── templates/          Word template used for the exported report
+│   ├── templates/          Built-in Word template, sample template, and the scripts that regenerate them
+│   ├── tests/              Regression tests (run directly with the backend's Python)
 │   ├── .env.example        Copy to .env and fill in your token
 │   └── requirements.txt
-├── frontend/               React web interface
+├── frontend/               React + TypeScript web interface (Vite)
 └── installer/              Source for Kairos-Setup.exe (not needed to use Kairos)
     ├── Kairos.iss          Inno Setup script that builds the EXE
     ├── install-deps.ps1    First-run bootstrap the installer calls
+    ├── kairos.ico          Application icon
     └── BEFORE-YOU-INSTALL.txt  The wizard's information page
 ```
 
 Created at runtime and never shipped: `backend/.venv`, `backend/data/` (your meetings),
-`backend/.env` (your token), `frontend/node_modules`.
+`backend/.env` (your token), `frontend/node_modules`, `frontend/dist`, `logs/`.
+
+The two regression tests use a throwaway database and never touch your meetings:
+
+```bash
+backend/.venv/Scripts/python backend/tests/test_codeswitch_corroboration.py
+backend/.venv/Scripts/python backend/tests/test_carry_forward_edit.py
+```
 
 ---
 
@@ -142,10 +154,11 @@ Created at runtime and never shipped: `backend/.venv`, `backend/data/` (your mee
 Recording (MP4/M4A/…) ──► FFmpeg ──► WAV, mono 16 kHz
                                         │
                                         ▼
-                                  Silero VAD ──► speech regions only
+                     Language detection (English / Malay / Mandarin)
                                         │
                                         ▼
-                              Faster-Whisper ──► transcript segments
+         Faster-Whisper large-v3, INT8, with Silero VAD built in ──► transcript
+           (one full pass per language actually present in the recording)
                                         │
                                         ▼
                                     WhisperX ──► word-level timings
@@ -154,17 +167,30 @@ Recording (MP4/M4A/…) ──► FFmpeg ──► WAV, mono 16 kHz
                               pyannote.audio ──► speaker labels
                                         │
                                         ▼
-                           Ollama + Llama 3.1 + LangGraph
+                     Llama 3.1 8B, served locally by Ollama
+             (JSON replies validated with Pydantic; uncited items dropped)
                                         │
                                         ▼
               action items · decisions · deadlines · issues · risks
                                         │
                                         ▼
-                            docxtpl ──► Word report (.docx)
+       Word report (.docx): built-in layout (docxtpl) or your own template
 ```
 
 Every extracted insight stores the ID of the transcript segment it came from, so each
-claim can be checked against what was actually said.
+claim can be checked against what was actually said. Items that cite nothing the model
+was shown are discarded, and a citation that doesn't appear to support its item is
+flagged in the interface for you to verify.
+
+A language that shares an alphabet with the main one (Malay inside an English meeting,
+for example) is only transcribed separately once it appears in at least three segments
+and at least 10% of all segments. A short English phrase can be detected as Malay with
+high confidence, so confidence alone isn't trusted.
+
+Before the language model runs, the speech models are released from GPU memory so the
+whole pipeline fits on a 6 GB card. The model calls go to Ollama on `localhost`.
+Nothing is sent to a cloud AI service; the internet is used only to download models
+during setup and for the occasional Hugging Face model check when they load.
 
 ---
 
@@ -187,7 +213,7 @@ The three most common issues:
 | Symptom | Cause and fix |
 |---|---|
 | `Setup did not finish` on a first run | Something it needs isn't installed — scroll up in that window, it names what's missing |
-| Upload fails with `[WinError 2]` | FFmpeg isn't findable — set `FFMPEG_PATH` in `backend/.env` |
+| Processing fails with `ffmpeg not found` (or `[WinError 2]`) | FFmpeg isn't findable — set `FFMPEG_PATH` in `backend/.env` |
 | Speaker labelling fails | The three Hugging Face licence pages above haven't been accepted |
 
 ---
@@ -203,8 +229,10 @@ Running from source: delete this folder.
 
 ## About
 
-Final Year Project Part 2 by **Annie Kiu Chi Wen** (TP070557, APU3F2601SE),
-Asia Pacific University. The design rationale behind these choices is documented in
-the Part 1 Investigation Report.
+Final Year Project Part 2 by **Annie Kiu Chi Wen** (TP070557, APD3F2601SE),
+Asia Pacific University. The design, implementation and evaluation are documented in
+the Part 2 report. The Part 1 Investigation Report records the original plan; some
+planned components, such as LangGraph orchestration, were replaced during the build
+by the simpler, code-checked approach described above.
 
 Academic work — all rights reserved.
